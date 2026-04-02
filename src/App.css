@@ -1,38 +1,305 @@
-.App {
-  text-align: center;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
+body {
+  background: #0d0d0d;
+  color: #e0e0e0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 14px;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
+.app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  background: #111;
+  border-bottom: 1px solid #222;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  color: #00ff88;
+  letter-spacing: 3px;
+}
+
+.logo-sub {
+  font-size: 12px;
+  color: #555;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  padding: 8px 20px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 13px;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+}
+
+.nav-btn:hover {
+  border-color: #00ff88;
+  color: #00ff88;
+}
+
+.nav-btn.active {
+  border-color: #00ff88;
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.05);
+}
+
+.main {
+  flex: 1;
+  padding: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 16px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #555;
+  border-bottom: 1px solid #222;
+}
+
+.table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1a1a1a;
+  color: #ccc;
+}
+
+.table tr:hover td {
+  background: #111;
+}
+
+.name-cell {
+  font-weight: 600;
+  color: #fff !important;
+}
+
+.date-cell {
+  font-size: 12px;
+  color: #555 !important;
+}
+
+code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: #1a1a1a;
+}
+
+code.find {
+  color: #ff6b6b;
+}
+
+code.replace {
+  color: #00ff88;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.badge-active {
+  background: rgba(0, 255, 136, 0.1);
+  color: #00ff88;
+  border: 1px solid rgba(0, 255, 136, 0.3);
+}
+
+.badge-inactive {
+  background: rgba(255, 255, 255, 0.05);
+  color: #555;
+  border: 1px solid #333;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  padding: 6px 14px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  border-color: #00ff88;
+  color: #00ff88;
+}
+
+.btn-primary:hover {
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.btn-run {
+  border-color: #00ff88;
+  color: #00ff88;
+}
+
+.btn-run:hover {
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.btn-edit:hover {
+  border-color: #888;
+  color: #ccc;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px;
+  color: #333;
+  font-size: 13px;
+  letter-spacing: 1px;
+}.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  z-index: 100;
 }
 
-.App-link {
-  color: #61dafb;
+.modal {
+  background: #111;
+  border: 1px solid #222;
+  width: 480px;
+  max-width: 90%;
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #222;
+}
+
+.modal-header h3 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #fff;
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.modal-close:hover {
+  color: #fff;
+}
+
+.modal-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #555;
+}
+
+.form-group input {
+  background: #0d0d0d;
+  border: 1px solid #333;
+  color: #e0e0e0;
+  padding: 10px 12px;
+  font-family: monospace;
+  font-size: 13px;
+  outline: none;
+}
+
+.form-group input:focus {
+  border-color: #00ff88;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px;
+  border-top: 1px solid #222;
+}.badge-dry {
+  background: rgba(255, 200, 0, 0.1);
+  color: #ffc800;
+  border: 1px solid rgba(255, 200, 0, 0.3);
 }
