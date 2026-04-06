@@ -445,3 +445,47 @@ code.replace {
   padding: 16px 24px;
   border-top: 1px solid var(--border-primary);
 }
+
+/* === Login === */
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+}
+
+.login-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  padding: 40px 36px;
+  width: 380px;
+  max-width: 90%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.login-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.login-btn {
+  padding: 12px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  width: 100%;
+  cursor: pointer;
+}
+
+/* === User Info === */
+
+.user-email {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.5px;
+}

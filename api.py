@@ -16,6 +16,7 @@ from database import (
 )
 from engine import run_refresh
 from scheduler import start_scheduler
+from auth import authenticate, auth_middleware
 
 app = FastAPI()
 
@@ -27,6 +28,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth middleware — /api/ isteklerini korur (login hariç)
+app.middleware("http")(auth_middleware)
 
 init_db()
 start_scheduler()
@@ -42,6 +46,21 @@ def mask_key(key):
 # --- API Router (tüm endpoint'ler /api/ altında) ---
 
 api = APIRouter(prefix="/api")
+
+# --- Auth ---
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@api.post("/login")
+def login(req: LoginRequest):
+    token = authenticate(req.email, req.password)
+    if not token:
+        return {"error": "Gecersiz email veya sifre"}
+    return {"token": token, "email": req.email}
+
+# --- Models ---
 
 class PublisherCreate(BaseModel):
     name: str

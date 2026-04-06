@@ -3,22 +3,24 @@ import PublisherList from './components/PublisherList';
 import LogViewer from './components/LogViewer';
 import PublisherForm from './components/PublisherForm';
 import ApprovalList from './components/ApprovalList';
+import Login from './components/Login';
+import { getToken, getUserEmail, logout } from './api';
 import './App.css';
 
 function App() {
+  const [loggedIn, setLoggedIn] = useState(!!getToken());
+  const [userEmail, setUserEmail] = useState(getUserEmail() || '');
   const [activeTab, setActiveTab] = useState('publishers');
   const [showForm, setShowForm] = useState(false);
   const [editingPublisher, setEditingPublisher] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
-  // Tema değiştiğinde body'ye attribute ekle ve localStorage'a kaydet
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  // URL'den tab parametresi varsa otomatik aç (email linklerinden)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') === 'approvals') {
@@ -31,6 +33,10 @@ function App() {
     setEditingPublisher(null);
     setRefreshKey(k => k + 1);
   };
+
+  if (!loggedIn) {
+    return <Login onLogin={(email) => { setLoggedIn(true); setUserEmail(email); }} />;
+  }
 
   return (
     <div className="app">
@@ -60,6 +66,8 @@ function App() {
               Job Logs
             </button>
           </nav>
+          <span className="user-email">{userEmail}</span>
+          <button className="btn" onClick={logout} title="Cikis Yap">Cikis</button>
           <button
             className="theme-toggle"
             onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}

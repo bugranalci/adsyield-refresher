@@ -1,12 +1,67 @@
 const BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000/api';
 
+// --- Token yönetimi ---
+
+export function getToken() {
+  return localStorage.getItem('token');
+}
+
+export function setToken(token) {
+  localStorage.setItem('token', token);
+}
+
+export function clearToken() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user_email');
+}
+
+export function getUserEmail() {
+  return localStorage.getItem('user_email');
+}
+
+// --- Request helper ---
+
 async function request(url, options = {}) {
-  const res = await fetch(url, options);
+  const token = getToken();
+  const headers = { ...options.headers };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, { ...options, headers });
+
+  if (res.status === 401) {
+    clearToken();
+    window.location.reload();
+    throw new Error('Oturum suresi doldu, tekrar giris yap');
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);
   }
   return res.json();
+}
+
+// --- Auth ---
+
+export async function login(email, password) {
+  const res = await fetch(`${BASE_URL}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await res.json();
+  if (data.token) {
+    setToken(data.token);
+    localStorage.setItem('user_email', data.email);
+  }
+  return data;
+}
+
+export function logout() {
+  clearToken();
+  window.location.reload();
 }
 
 // --- Publishers ---
