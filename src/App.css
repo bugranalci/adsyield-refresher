@@ -303,3 +303,17 @@ code.replace {
   color: #ffc800;
   border: 1px solid rgba(255, 200, 0, 0.3);
 }
+
+.form-error {
+  background: rgba(255, 80, 80, 0.1);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  color: #ff6b6b;
+  padding: 10px 14px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+.btn-delete:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}

@@ -10,9 +10,12 @@ function PublisherForm({ onClose, onSaved, publisher }) {
     find_string: publisher?.find_string || '',
     replace_string: publisher?.replace_string || '',
     frequency_days: publisher?.frequency_days || 2,
-    active: publisher?.active ?? 1
+    active: publisher?.active ?? 1,
+    mode: publisher?.mode || 'manual',
+    notify_email: publisher?.notify_email || ''
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -20,22 +23,39 @@ function PublisherForm({ onClose, onSaved, publisher }) {
 
   const handleSubmit = async () => {
     if (!form.name || !form.management_key || !form.publisher_tag || !form.find_string || !form.replace_string) {
-      alert('Tüm alanları doldur.');
+      setError('Tum alanlari doldur.');
+      return;
+    }
+    if (form.mode === 'hybrid' && !form.notify_email) {
+      setError('Hybrid modda notify email zorunlu.');
       return;
     }
     setLoading(true);
-    if (isEdit) {
-      await updatePublisher(publisher.id, {
-        find_string: form.find_string,
-        replace_string: form.replace_string,
-        frequency_days: parseInt(form.frequency_days),
-        active: parseInt(form.active)
-      });
-    } else {
-      await createPublisher({ ...form, frequency_days: parseInt(form.frequency_days) });
+    setError('');
+    try {
+      if (isEdit) {
+        const res = await updatePublisher(publisher.id, {
+          find_string: form.find_string,
+          replace_string: form.replace_string,
+          frequency_days: parseInt(form.frequency_days),
+          active: parseInt(form.active),
+          mode: form.mode,
+          notify_email: form.notify_email
+        });
+        if (res.error) { setError(res.error); setLoading(false); return; }
+      } else {
+        await createPublisher({ ...form, frequency_days: parseInt(form.frequency_days) });
+      }
+      onSaved();
+    } catch (e) {
+      setError(e.message);
     }
     setLoading(false);
-    onSaved();
+  };
+
+  const selectStyle = {
+    background: '#0d0d0d', border: '1px solid #333',
+    color: '#e0e0e0', padding: '10px 12px', fontFamily: 'monospace', width: '100%'
   };
 
   return (
@@ -43,9 +63,10 @@ function PublisherForm({ onClose, onSaved, publisher }) {
       <div className="modal">
         <div className="modal-header">
           <h3>{isEdit ? 'Edit Publisher' : 'Add Publisher'}</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}>&#x2715;</button>
         </div>
         <div className="modal-body">
+          {error && <div className="form-error">{error}</div>}
           <div className="form-group">
             <label>Publisher Name</label>
             <input name="name" value={form.name} onChange={handleChange} placeholder="TheGameOps" disabled={isEdit} />
@@ -70,10 +91,23 @@ function PublisherForm({ onClose, onSaved, publisher }) {
             <label>Frequency (days)</label>
             <input name="frequency_days" type="number" value={form.frequency_days} onChange={handleChange} />
           </div>
+          <div className="form-group">
+            <label>Mode</label>
+            <select name="mode" value={form.mode} onChange={handleChange} style={selectStyle}>
+              <option value="manual">Manual</option>
+              <option value="hybrid">Hybrid (Auto Dry Run + Email Onay)</option>
+            </select>
+          </div>
+          {form.mode === 'hybrid' && (
+            <div className="form-group">
+              <label>Notify Email (Account Manager)</label>
+              <input name="notify_email" value={form.notify_email} onChange={handleChange} placeholder="am@makroo.com" />
+            </div>
+          )}
           {isEdit && (
             <div className="form-group">
               <label>Status</label>
-              <select name="active" value={form.active} onChange={handleChange} style={{background:'#0d0d0d', border:'1px solid #333', color:'#e0e0e0', padding:'10px 12px', fontFamily:'monospace'}}>
+              <select name="active" value={form.active} onChange={handleChange} style={selectStyle}>
                 <option value={1}>Active</option>
                 <option value={0}>Inactive</option>
               </select>
