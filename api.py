@@ -1,7 +1,10 @@
 import os
 import threading
 import uuid
-from fastapi import FastAPI
+from pathlib import Path
+from fastapi import FastAPI, APIRouter
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -26,8 +29,6 @@ app.add_middleware(
 )
 
 init_db()
-
-# Scheduler'ı başlat (hybrid publisher'lar için)
 start_scheduler()
 
 # In-memory job tracker
@@ -38,7 +39,9 @@ def mask_key(key):
         return "***"
     return "***" + key[-6:]
 
-# --- Pydantic Models ---
+# --- API Router (tüm endpoint'ler /api/ altında) ---
+
+api = APIRouter(prefix="/api")
 
 class PublisherCreate(BaseModel):
     name: str
@@ -58,16 +61,14 @@ class PublisherUpdate(BaseModel):
     mode: Optional[str] = None
     notify_email: Optional[str] = None
 
-# --- Publisher Endpoints ---
-
-@app.get("/publishers")
+@api.get("/publishers")
 def list_publishers():
     publishers = get_all_publishers()
     for p in publishers:
         p["management_key"] = mask_key(p["management_key"])
     return publishers
 
-@app.post("/publishers")
+@api.post("/publishers")
 def create_publisher(p: PublisherCreate):
     publisher_id = add_publisher(
         p.name, p.management_key, p.publisher_tag,
@@ -76,7 +77,7 @@ def create_publisher(p: PublisherCreate):
     )
     return {"id": publisher_id, "status": "created"}
 
-@app.put("/publishers/{publisher_id}")
+@api.put("/publishers/{publisher_id}")
 def update_publisher(publisher_id: int, p: PublisherUpdate):
     found = db_update_publisher(
         publisher_id, p.find_string, p.replace_string,
@@ -86,14 +87,14 @@ def update_publisher(publisher_id: int, p: PublisherUpdate):
         return {"error": "Publisher not found"}
     return {"status": "updated"}
 
-@app.delete("/publishers/{publisher_id}")
+@api.delete("/publishers/{publisher_id}")
 def delete_publisher(publisher_id: int):
     found = db_delete_publisher(publisher_id)
     if not found:
         return {"error": "Publisher not found"}
     return {"status": "deleted"}
 
-# --- Run Endpoints ---
+# --- Run ---
 
 def _run_job(job_id, publisher, dry_run):
     try:
@@ -110,7 +111,7 @@ def _run_job(job_id, publisher, dry_run):
     except Exception as e:
         jobs[job_id] = {"status": "error", "message": str(e)}
 
-@app.post("/publishers/{publisher_id}/run")
+@api.post("/publishers/{publisher_id}/run")
 def run_publisher(publisher_id: int, dry_run: bool = True):
     publishers = get_all_publishers()
     publisher = next((p for p in publishers if p["id"] == publisher_id), None)
@@ -132,26 +133,25 @@ def run_publisher(publisher_id: int, dry_run: bool = True):
 
     return {"status": "started", "job_id": job_id}
 
-@app.get("/jobs/{job_id}")
+@api.get("/jobs/{job_id}")
 def get_job_status(job_id: str):
     job = jobs.get(job_id)
     if not job:
         return {"error": "Job not found"}
     return job
 
-# --- Approval Endpoints ---
+# --- Approvals ---
 
-@app.get("/approvals")
+@api.get("/approvals")
 def list_approvals():
     return get_pending_approvals()
 
-@app.get("/approvals/{job_id}")
+@api.get("/approvals/{job_id}")
 def get_approval_detail(job_id: str):
     approval = get_approval(job_id)
     if not approval:
         return {"error": "Approval not found"}
 
-    # Publisher bilgilerini ekle
     publishers = get_all_publishers()
     publisher = next((p for p in publishers if p["id"] == approval["publisher_id"]), None)
     if publisher:
@@ -159,14 +159,13 @@ def get_approval_detail(job_id: str):
         approval["find_string"] = publisher["find_string"]
         approval["replace_string"] = publisher["replace_string"]
 
-    # İlgili dry run loglarını çek
     logs = get_job_logs(publisher_id=approval["publisher_id"], limit=500)
     dry_logs = [l for l in logs if l["status"] == "DRY_RUN"]
     approval["logs"] = dry_logs[:approval["matched"]]
 
     return approval
 
-@app.post("/approvals/{job_id}/confirm")
+@api.post("/approvals/{job_id}/confirm")
 def confirm_approval(job_id: str):
     approval = get_approval(job_id)
     if not approval:
@@ -174,15 +173,12 @@ def confirm_approval(job_id: str):
     if approval["status"] != "pending":
         return {"error": f"Approval zaten {approval['status']}"}
 
-    # Expire kontrolü
     from datetime import datetime
     if approval["expires_at"] and datetime.fromisoformat(approval["expires_at"]) < datetime.now():
         return {"error": "Approval suresi dolmus (48 saat)"}
 
-    # Onayla
     approve_job(job_id)
 
-    # Publisher'ı bul ve canlı run başlat
     publishers = get_all_publishers()
     publisher = next((p for p in publishers if p["id"] == approval["publisher_id"]), None)
     if not publisher:
@@ -196,8 +192,23 @@ def confirm_approval(job_id: str):
 
     return {"status": "approved", "run_job_id": run_job_id}
 
-# --- Logs ---
-
-@app.get("/logs")
+@api.get("/logs")
 def list_logs():
     return get_job_logs(limit=200)
+
+# --- Router'ı ekle ---
+app.include_router(api)
+
+# --- React build serve ---
+BUILD_DIR = Path(__file__).parent / "build"
+
+if BUILD_DIR.exists():
+    app.mount("/static", StaticFiles(directory=BUILD_DIR / "static"), name="static")
+
+    @app.get("/{full_path:path}")
+    async def serve_react(full_path: str):
+        """API dışındaki tüm route'ları React'e yönlendir"""
+        file_path = BUILD_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(BUILD_DIR / "index.html")

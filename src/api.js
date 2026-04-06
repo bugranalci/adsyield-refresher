@@ -1,4 +1,4 @@
-const BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000/api';
 
 async function request(url, options = {}) {
   const res = await fetch(url, options);
