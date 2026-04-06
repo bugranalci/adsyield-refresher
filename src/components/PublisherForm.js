@@ -53,11 +53,6 @@ function PublisherForm({ onClose, onSaved, publisher }) {
     setLoading(false);
   };
 
-  const selectStyle = {
-    background: '#0d0d0d', border: '1px solid #333',
-    color: '#e0e0e0', padding: '10px 12px', fontFamily: 'monospace', width: '100%'
-  };
-
   return (
     <div className="modal-overlay">
       <div className="modal">
@@ -93,7 +88,7 @@ function PublisherForm({ onClose, onSaved, publisher }) {
           </div>
           <div className="form-group">
             <label>Mode</label>
-            <select name="mode" value={form.mode} onChange={handleChange} style={selectStyle}>
+            <select name="mode" value={form.mode} onChange={handleChange} className="form-select">
               <option value="manual">Manual</option>
               <option value="hybrid">Hybrid (Auto Dry Run + Email Onay)</option>
             </select>
@@ -107,7 +102,7 @@ function PublisherForm({ onClose, onSaved, publisher }) {
           {isEdit && (
             <div className="form-group">
               <label>Status</label>
-              <select name="active" value={form.active} onChange={handleChange} style={selectStyle}>
+              <select name="active" value={form.active} onChange={handleChange} className="form-select">
                 <option value={1}>Active</option>
                 <option value={0}>Inactive</option>
               </select>

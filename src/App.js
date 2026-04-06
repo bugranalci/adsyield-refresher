@@ -10,6 +10,13 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [editingPublisher, setEditingPublisher] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+
+  // Tema değiştiğinde body'ye attribute ekle ve localStorage'a kaydet
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // URL'den tab parametresi varsa otomatik aç (email linklerinden)
   useEffect(() => {
@@ -32,26 +39,35 @@ function App() {
           <span className="logo">ADSYIELD</span>
           <span className="logo-sub">Refresh Tool</span>
         </div>
-        <nav className="nav">
+        <div className="header-right">
+          <nav className="nav">
+            <button
+              className={`nav-btn ${activeTab === 'publishers' ? 'active' : ''}`}
+              onClick={() => setActiveTab('publishers')}
+            >
+              Publishers
+            </button>
+            <button
+              className={`nav-btn ${activeTab === 'approvals' ? 'active' : ''}`}
+              onClick={() => setActiveTab('approvals')}
+            >
+              Approvals
+            </button>
+            <button
+              className={`nav-btn ${activeTab === 'logs' ? 'active' : ''}`}
+              onClick={() => setActiveTab('logs')}
+            >
+              Job Logs
+            </button>
+          </nav>
           <button
-            className={`nav-btn ${activeTab === 'publishers' ? 'active' : ''}`}
-            onClick={() => setActiveTab('publishers')}
+            className="theme-toggle"
+            onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
           >
-            Publishers
+            {theme === 'dark' ? '\u2600' : '\u263E'}
           </button>
-          <button
-            className={`nav-btn ${activeTab === 'approvals' ? 'active' : ''}`}
-            onClick={() => setActiveTab('approvals')}
-          >
-            Approvals
-          </button>
-          <button
-            className={`nav-btn ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('logs')}
-          >
-            Job Logs
-          </button>
-        </nav>
+        </div>
       </header>
       <main className="main">
         {activeTab === 'publishers' && (

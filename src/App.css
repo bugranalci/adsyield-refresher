@@ -1,3 +1,76 @@
+/* === Theme Variables === */
+:root {
+  --bg-primary: #0d0d0d;
+  --bg-secondary: #111;
+  --bg-hover: #111;
+  --bg-input: #0d0d0d;
+  --bg-code: #1a1a1a;
+  --bg-modal-overlay: rgba(0, 0, 0, 0.8);
+
+  --border-primary: #222;
+  --border-secondary: #333;
+  --border-subtle: #1a1a1a;
+
+  --text-primary: #fff;
+  --text-secondary: #e0e0e0;
+  --text-tertiary: #ccc;
+  --text-muted: #888;
+  --text-faint: #555;
+  --text-empty: #333;
+
+  --accent: #00ff88;
+  --accent-bg: rgba(0, 255, 136, 0.05);
+  --accent-bg-hover: rgba(0, 255, 136, 0.1);
+  --accent-border: rgba(0, 255, 136, 0.3);
+
+  --danger: #ff6b6b;
+  --danger-bg: rgba(255, 80, 80, 0.1);
+  --danger-border: rgba(255, 80, 80, 0.3);
+
+  --warning: #ffc800;
+  --warning-bg: rgba(255, 200, 0, 0.1);
+  --warning-border: rgba(255, 200, 0, 0.3);
+
+  --inactive-bg: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="light"] {
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #fff;
+  --bg-hover: #f0f0f0;
+  --bg-input: #fff;
+  --bg-code: #e8e8e8;
+  --bg-modal-overlay: rgba(0, 0, 0, 0.4);
+
+  --border-primary: #ddd;
+  --border-secondary: #ccc;
+  --border-subtle: #e8e8e8;
+
+  --text-primary: #111;
+  --text-secondary: #222;
+  --text-tertiary: #444;
+  --text-muted: #666;
+  --text-faint: #999;
+  --text-empty: #bbb;
+
+  --accent: #00994d;
+  --accent-bg: rgba(0, 153, 77, 0.05);
+  --accent-bg-hover: rgba(0, 153, 77, 0.1);
+  --accent-border: rgba(0, 153, 77, 0.3);
+
+  --danger: #dc3545;
+  --danger-bg: rgba(220, 53, 69, 0.08);
+  --danger-border: rgba(220, 53, 69, 0.3);
+
+  --warning: #cc9900;
+  --warning-bg: rgba(204, 153, 0, 0.08);
+  --warning-border: rgba(204, 153, 0, 0.3);
+
+  --inactive-bg: rgba(0, 0, 0, 0.04);
+}
+
+/* === Base === */
+
 * {
   margin: 0;
   padding: 0;
@@ -5,10 +78,11 @@
 }
 
 body {
-  background: #0d0d0d;
-  color: #e0e0e0;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 14px;
+  transition: background 0.2s, color 0.2s;
 }
 
 .app {
@@ -17,13 +91,15 @@ body {
   flex-direction: column;
 }
 
+/* === Header === */
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 32px;
-  background: #111;
-  border-bottom: 1px solid #222;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .header-left {
@@ -35,15 +111,21 @@ body {
 .logo {
   font-size: 18px;
   font-weight: 700;
-  color: #00ff88;
+  color: var(--accent);
   letter-spacing: 3px;
 }
 
 .logo-sub {
   font-size: 12px;
-  color: #555;
+  color: var(--text-faint);
   letter-spacing: 2px;
   text-transform: uppercase;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .nav {
@@ -53,8 +135,8 @@ body {
 
 .nav-btn {
   background: transparent;
-  border: 1px solid #333;
-  color: #888;
+  border: 1px solid var(--border-secondary);
+  color: var(--text-muted);
   padding: 8px 20px;
   cursor: pointer;
   font-family: monospace;
@@ -64,15 +146,36 @@ body {
 }
 
 .nav-btn:hover {
-  border-color: #00ff88;
-  color: #00ff88;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .nav-btn.active {
-  border-color: #00ff88;
-  color: #00ff88;
-  background: rgba(0, 255, 136, 0.05);
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
 }
+
+/* === Theme Toggle === */
+
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border-secondary);
+  color: var(--text-muted);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transition: all 0.2s;
+  border-radius: 2px;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* === Main === */
 
 .main {
   flex: 1;
@@ -89,10 +192,12 @@ body {
 .section-title {
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--text-primary);
   letter-spacing: 2px;
   text-transform: uppercase;
 }
+
+/* === Table === */
 
 .table {
   width: 100%;
@@ -105,45 +210,49 @@ body {
   font-size: 11px;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: #555;
-  border-bottom: 1px solid #222;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .table td {
   padding: 14px 16px;
-  border-bottom: 1px solid #1a1a1a;
-  color: #ccc;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
 }
 
 .table tr:hover td {
-  background: #111;
+  background: var(--bg-hover);
 }
 
 .name-cell {
   font-weight: 600;
-  color: #fff !important;
+  color: var(--text-primary) !important;
 }
 
 .date-cell {
   font-size: 12px;
-  color: #555 !important;
+  color: var(--text-faint) !important;
 }
+
+/* === Code === */
 
 code {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 3px;
-  background: #1a1a1a;
+  background: var(--bg-code);
 }
 
 code.find {
-  color: #ff6b6b;
+  color: var(--danger);
 }
 
 code.replace {
-  color: #00ff88;
+  color: var(--accent);
 }
+
+/* === Badges === */
 
 .badge {
   font-size: 11px;
@@ -155,16 +264,24 @@ code.replace {
 }
 
 .badge-active {
-  background: rgba(0, 255, 136, 0.1);
-  color: #00ff88;
-  border: 1px solid rgba(0, 255, 136, 0.3);
+  background: var(--accent-bg-hover);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
 }
 
 .badge-inactive {
-  background: rgba(255, 255, 255, 0.05);
-  color: #555;
-  border: 1px solid #333;
+  background: var(--inactive-bg);
+  color: var(--text-faint);
+  border: 1px solid var(--border-secondary);
 }
+
+.badge-dry {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+/* === Buttons === */
 
 .actions {
   display: flex;
@@ -173,51 +290,67 @@ code.replace {
 
 .btn {
   padding: 6px 14px;
-  border: 1px solid #333;
+  border: 1px solid var(--border-secondary);
   background: transparent;
-  color: #888;
+  color: var(--text-muted);
   cursor: pointer;
   font-family: monospace;
   font-size: 12px;
   transition: all 0.2s;
 }
 
-.btn-primary {
-  border-color: #00ff88;
-  color: #00ff88;
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.btn-primary:hover {
-  background: rgba(0, 255, 136, 0.1);
+.btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-bg-hover);
 }
 
 .btn-run {
-  border-color: #00ff88;
-  color: #00ff88;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
-.btn-run:hover {
-  background: rgba(0, 255, 136, 0.1);
+.btn-run:hover:not(:disabled) {
+  background: var(--accent-bg-hover);
 }
 
-.btn-edit:hover {
-  border-color: #888;
-  color: #ccc;
+.btn-edit:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  color: var(--text-tertiary);
 }
+
+.btn-delete:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* === Empty State === */
 
 .empty-state {
   text-align: center;
   padding: 60px;
-  color: #333;
+  color: var(--text-empty);
   font-size: 13px;
   letter-spacing: 1px;
-}.modal-overlay {
+}
+
+/* === Modal === */
+
+.modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--bg-modal-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -225,8 +358,8 @@ code.replace {
 }
 
 .modal {
-  background: #111;
-  border: 1px solid #222;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   width: 480px;
   max-width: 90%;
 }
@@ -236,26 +369,26 @@ code.replace {
   align-items: center;
   justify-content: space-between;
   padding: 20px 24px;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .modal-header h3 {
   font-size: 14px;
   letter-spacing: 2px;
   text-transform: uppercase;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .modal-close {
   background: transparent;
   border: none;
-  color: #555;
+  color: var(--text-faint);
   cursor: pointer;
   font-size: 16px;
 }
 
 .modal-close:hover {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .modal-body {
@@ -264,6 +397,8 @@ code.replace {
   flex-direction: column;
   gap: 16px;
 }
+
+/* === Form === */
 
 .form-group {
   display: flex;
@@ -275,21 +410,32 @@ code.replace {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #555;
+  color: var(--text-faint);
 }
 
-.form-group input {
-  background: #0d0d0d;
-  border: 1px solid #333;
-  color: #e0e0e0;
+.form-group input,
+.form-group select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-secondary);
   padding: 10px 12px;
   font-family: monospace;
   font-size: 13px;
   outline: none;
 }
 
-.form-group input:focus {
-  border-color: #00ff88;
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--accent);
+}
+
+.form-error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+  padding: 10px 14px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
 }
 
 .modal-footer {
@@ -297,23 +443,5 @@ code.replace {
   justify-content: flex-end;
   gap: 8px;
   padding: 16px 24px;
-  border-top: 1px solid #222;
-}.badge-dry {
-  background: rgba(255, 200, 0, 0.1);
-  color: #ffc800;
-  border: 1px solid rgba(255, 200, 0, 0.3);
-}
-
-.form-error {
-  background: rgba(255, 80, 80, 0.1);
-  border: 1px solid rgba(255, 80, 80, 0.3);
-  color: #ff6b6b;
-  padding: 10px 14px;
-  font-size: 12px;
-  letter-spacing: 0.5px;
-}
-
-.btn-delete:hover {
-  border-color: #ff6b6b;
-  color: #ff6b6b;
+  border-top: 1px solid var(--border-primary);
 }
