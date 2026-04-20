@@ -88,7 +88,7 @@ def login(req: LoginRequest):
 class PublisherCreate(BaseModel):
     name: str
     management_key: str
-    gam_publisher_id: str
+    gam_publisher_id: str = ""  # Test modunda bos olabilir
     frequency_days: int = 2
     mode: str = "manual"
     notify_email: str = ""
@@ -232,8 +232,8 @@ def run_app(app_id: int, dry_run: bool = True):
         return {"error": "App not found"}
     if not a.get("active"):
         return {"error": "App inactive"}
-    if not a.get("management_key") or not a.get("gam_publisher_id"):
-        return {"error": "App'in publisher'inda management_key veya gam_publisher_id eksik"}
+    if not a.get("management_key"):
+        return {"error": "App'in publisher'inda management_key eksik"}
 
     # Aynı app için çalışan job var mı?
     for jid, j in jobs.items():

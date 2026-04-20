@@ -21,8 +21,8 @@ function PublisherForm({ onClose, onSaved, publisher }) {
 
   const handleSubmit = async () => {
     if (!isEdit) {
-      if (!form.name || !form.management_key || !form.gam_publisher_id) {
-        setError('Name, Management Key ve GAM Publisher ID zorunlu.');
+      if (!form.name || !form.management_key) {
+        setError('Name ve Management Key zorunlu.');
         return;
       }
     }
@@ -74,7 +74,7 @@ function PublisherForm({ onClose, onSaved, publisher }) {
             <input name="management_key" value={form.management_key} onChange={handleChange} placeholder="MAX API key..." disabled={isEdit} />
           </div>
           <div className="form-group">
-            <label>GAM Publisher ID</label>
+            <label>GAM Publisher ID (test modunda bos birakilabilir)</label>
             <input name="gam_publisher_id" value={form.gam_publisher_id} onChange={handleChange} placeholder="22860626436" />
           </div>
           <div className="form-group">

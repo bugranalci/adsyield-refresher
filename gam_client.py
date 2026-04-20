@@ -17,14 +17,26 @@ from typing import Optional
 
 # --- Sabitler ---
 
-MAKROO_GAM_NETWORK_CODE = "324749355"
+# GAM Network Code env'den alınır. Production: 324749355 (Makroo MCM parent),
+# Test: 86335799 (Makroo test hesabı)
+GAM_NETWORK_CODE = os.getenv("GAM_NETWORK_CODE", "324749355")
 GAM_API_VERSION = "v202602"  # Quarterly version, Google her 3 ayda günceller
 
-# Slot parse: V8_bnr_aos_5.50 → version=8, format=bnr, platform=aos, cpm=5.50
-SLOT_REGEX = re.compile(r"^V(\d+)_([a-z0-9]+)_(aos|ios)_(\d+\.\d+)$", re.IGNORECASE)
+# İki pattern desteklenir:
+#   Production: V8_bnr_aos_5.50  → version, format, platform, cpm hepsi var
+#   Test:       v1_masthead      → sadece version ve format
+SLOT_REGEX_PROD = re.compile(
+    r"^V(\d+)_([a-z0-9]+)_(aos|ios)_(\d+\.\d+)$", re.IGNORECASE
+)
+SLOT_REGEX_TEST = re.compile(
+    r"^v(\d+)_([a-z0-9]+)$", re.IGNORECASE
+)
 
-# Path template
-GAM_PATH_TEMPLATE = "/{network_code},{publisher_id}/2021/{app_name}/"
+# Path template'leri:
+#   Production: /324749355,22860626436/2021/Mackolik/
+#   Test:       /86335799/game1/
+GAM_PATH_PROD = "/{network_code},{publisher_id}/2021/{app_name}/"
+GAM_PATH_TEST = "/{network_code}/{app_name}/"
 
 
 # --- Service Account Auth + Client Cache ---
@@ -97,7 +109,7 @@ def _get_client():
         client = ad_manager.AdManagerClient(
             oauth2_client,
             "adsyield-refresher",
-            network_code=MAKROO_GAM_NETWORK_CODE,
+            network_code=GAM_NETWORK_CODE,
         )
         _client_cache = client
         return client
@@ -106,45 +118,73 @@ def _get_client():
 # --- Path & Slot Helpers ---
 
 def build_app_path(gam_publisher_id: str, app_name: str) -> str:
-    """App'in GAM path prefix'ini oluştur."""
-    return GAM_PATH_TEMPLATE.format(
-        network_code=MAKROO_GAM_NETWORK_CODE,
-        publisher_id=gam_publisher_id,
+    """App'in GAM path prefix'ini oluştur.
+
+    gam_publisher_id doluysa production format, boşsa test format.
+    """
+    if gam_publisher_id:
+        return GAM_PATH_PROD.format(
+            network_code=GAM_NETWORK_CODE,
+            publisher_id=gam_publisher_id,
+            app_name=app_name,
+        )
+    return GAM_PATH_TEST.format(
+        network_code=GAM_NETWORK_CODE,
         app_name=app_name,
     )
 
 
 def build_ad_unit_code(gam_publisher_id: str, app_name: str, version: int,
-                       format_: str, platform: str, cpm) -> str:
+                       format_: str, platform: str = "", cpm=None) -> str:
     """Yeni versiyon ad_network_ad_unit_id oluştur.
 
-    Örnek: /324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50
+    Production: /324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50
+    Test:       /86335799/game1/v2_masthead
     """
-    cpm_str = f"{float(cpm):.2f}"
-    return (
-        f"/{MAKROO_GAM_NETWORK_CODE},{gam_publisher_id}/2021/"
-        f"{app_name}/V{version}_{format_}_{platform}_{cpm_str}"
-    )
+    if gam_publisher_id and platform and cpm is not None:
+        cpm_str = f"{float(cpm):.2f}"
+        return (
+            f"/{GAM_NETWORK_CODE},{gam_publisher_id}/2021/"
+            f"{app_name}/V{version}_{format_}_{platform}_{cpm_str}"
+        )
+    # Test format
+    return f"/{GAM_NETWORK_CODE}/{app_name}/v{version}_{format_}"
 
 
 def parse_slot_from_name(name: str) -> Optional[dict]:
     """Ad unit ID/name'in son parçasından slot bilgilerini çıkar.
 
-    Input: "/324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50"
-    Output: {"version": 8, "format": "bnr", "platform": "aos", "cpm": Decimal("5.50")}
+    Production input: "/324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50"
+    Test input:       "/86335799/game1/v1_masthead"
+
+    Production output: {"version": 8, "format": "bnr", "platform": "aos", "cpm": Decimal("5.50")}
+    Test output:       {"version": 1, "format": "masthead", "platform": "", "cpm": Decimal("0")}
     """
     if not name:
         return None
     last_segment = name.rsplit("/", 1)[-1]
-    m = SLOT_REGEX.match(last_segment)
-    if not m:
-        return None
-    return {
-        "version": int(m.group(1)),
-        "format": m.group(2).lower(),
-        "platform": m.group(3).lower(),
-        "cpm": Decimal(m.group(4)),
-    }
+
+    # Önce production pattern'ını dene
+    m = SLOT_REGEX_PROD.match(last_segment)
+    if m:
+        return {
+            "version": int(m.group(1)),
+            "format": m.group(2).lower(),
+            "platform": m.group(3).lower(),
+            "cpm": Decimal(m.group(4)),
+        }
+
+    # Test pattern
+    m = SLOT_REGEX_TEST.match(last_segment)
+    if m:
+        return {
+            "version": int(m.group(1)),
+            "format": m.group(2).lower(),
+            "platform": "",
+            "cpm": Decimal("0"),
+        }
+
+    return None
 
 
 def _build_full_path(unit) -> str:
@@ -191,8 +231,6 @@ def list_ad_units_for_app(gam_publisher_id: str, app_name: str, platform: str) -
     client = _get_client()
     service = client.GetService("InventoryService", version=GAM_API_VERSION)
 
-    expected_prefix = build_app_path(gam_publisher_id, app_name)
-
     # Pagination
     all_units = []
     offset = 0
@@ -229,8 +267,15 @@ def list_ad_units_for_app(gam_publisher_id: str, app_name: str, platform: str) -
         if not full_path:
             continue
 
-        # Path prefix kontrolü
-        if expected_prefix not in full_path:
+        # Path kontrolü: app_name segmentinin path'te olması yeterli.
+        # GAM'de root'taki network_code bazen farklı formatlarda dönebiliyor
+        # (ör. "ca-pub-xxx" vs "86335799"), bu yüzden tam prefix match yerine
+        # app_name'i arıyoruz.
+        if f"/{app_name}/" not in full_path:
+            continue
+
+        # Production modunda ek olarak publisher_id path'te olmalı
+        if gam_publisher_id and gam_publisher_id not in full_path:
             continue
 
         # Slot pattern kontrolü
@@ -239,11 +284,13 @@ def list_ad_units_for_app(gam_publisher_id: str, app_name: str, platform: str) -
             continue
 
         # Platform kontrolü
-        if parsed["platform"] != platform.lower():
+        # - Production pattern: platform dolu (aos/ios), app'in platformuna eşleşmeli
+        # - Test pattern: platform boş, filtreleme yapılmaz
+        if parsed["platform"] and parsed["platform"] != platform.lower():
             continue
 
-        unit_id = unit.get("id") if isinstance(unit, dict) else getattr(unit, "id", None)
-        name = unit.get("name") if isinstance(unit, dict) else getattr(unit, "name", "")
+        unit_id = getattr(unit, "id", None) if not isinstance(unit, dict) else unit.get("id")
+        name = getattr(unit, "name", "") if not isinstance(unit, dict) else unit.get("name")
 
         result.append({
             "id": str(unit_id) if unit_id else "",
