@@ -1,26 +1,24 @@
-"""Google Ad Manager API client.
+"""Google Ad Manager API client — SOAP tabanlı (googleads-python-lib).
 
-Makroo'nun service account'u ile GAM'e bağlanır, belirli bir path altındaki
+Makroo'nun service account'u ile GAM InventoryService'e bağlanır,
 ad unit'leri çeker ve slot bilgilerini parse eder.
 
-GAM REST API kullanıyoruz (google-api-python-client). Service account JWT
-ile auth oluyoruz.
+GAM REST API henüz AdUnit listeleme için tam olgun değil, bu yüzden
+Google'ın resmi googleads-python-lib (SOAP) kütüphanesini kullanıyoruz.
 """
 import os
 import re
 import json
+import tempfile
+import atexit
+import threading
 from decimal import Decimal
 from typing import Optional
-
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
 # --- Sabitler ---
 
 MAKROO_GAM_NETWORK_CODE = "324749355"
-GAM_API_SCOPE = "https://www.googleapis.com/auth/dfp"
-GAM_API_VERSION = "v202411"
+GAM_API_VERSION = "v202602"  # Quarterly version, Google her 3 ayda günceller
 
 # Slot parse: V8_bnr_aos_5.50 → version=8, format=bnr, platform=aos, cpm=5.50
 SLOT_REGEX = re.compile(r"^V(\d+)_([a-z0-9]+)_(aos|ios)_(\d+\.\d+)$", re.IGNORECASE)
@@ -29,48 +27,86 @@ SLOT_REGEX = re.compile(r"^V(\d+)_([a-z0-9]+)_(aos|ios)_(\d+\.\d+)$", re.IGNOREC
 GAM_PATH_TEMPLATE = "/{network_code},{publisher_id}/2021/{app_name}/"
 
 
-# --- Service Account Auth ---
+# --- Service Account Auth + Client Cache ---
 
-_credentials_cache = None
+_client_cache = None
+_key_file_path = None
+_lock = threading.Lock()
 
-def _load_credentials():
-    """Service account JSON'u env'den oku ve credentials oluştur."""
-    global _credentials_cache
-    if _credentials_cache is not None:
-        return _credentials_cache
+
+def _write_service_account_to_tempfile() -> str:
+    """GAM_SERVICE_ACCOUNT_JSON env'indeki JSON'u geçici bir dosyaya yaz.
+
+    googleads-python-lib service account için dosya yolu bekliyor,
+    in-memory JSON kabul etmiyor. Bu yüzden tempfile kullanıyoruz.
+    """
+    global _key_file_path
+    if _key_file_path and os.path.exists(_key_file_path):
+        return _key_file_path
 
     json_str = os.getenv("GAM_SERVICE_ACCOUNT_JSON", "")
     if not json_str:
         raise RuntimeError(
-            "GAM_SERVICE_ACCOUNT_JSON environment variable'i yok. "
-            "Makroo service account JSON'u bu env'e yuklenmeli."
+            "GAM_SERVICE_ACCOUNT_JSON environment variable yok. "
+            "Service account JSON'unu Railway Variables'a ekle."
         )
 
     try:
+        # JSON'u parse et ve tekrar dump et (format doğrulaması)
         info = json.loads(json_str)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"GAM_SERVICE_ACCOUNT_JSON gecersiz JSON: {e}")
 
-    creds = service_account.Credentials.from_service_account_info(
-        info, scopes=[GAM_API_SCOPE]
-    )
-    _credentials_cache = creds
-    return creds
+    # Geçici dosya oluştur (process bittiğinde otomatik silinecek)
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="gam_sa_")
+    with os.fdopen(fd, "w") as f:
+        json.dump(info, f)
+
+    _key_file_path = path
+    atexit.register(_cleanup_keyfile)
+    return path
 
 
-def _get_gam_service():
-    """GAM API service client'ı oluştur."""
-    creds = _load_credentials()
-    # GAM için discovery document manuel — build_from_document da kullanılabilir
-    # Ancak google-ads/ad-manager için genelde SOAP API kullanılır.
-    # REST API için admanager.googleapis.com'u kullanacağız.
-    return build("admanager", GAM_API_VERSION, credentials=creds, cache_discovery=False)
+def _cleanup_keyfile():
+    """Process kapandığında temp key file'ı sil."""
+    global _key_file_path
+    if _key_file_path and os.path.exists(_key_file_path):
+        try:
+            os.unlink(_key_file_path)
+        except Exception:
+            pass
+
+
+def _get_client():
+    """googleads AdManagerClient instance'ı oluştur (cached)."""
+    global _client_cache
+    with _lock:
+        if _client_cache is not None:
+            return _client_cache
+
+        # Lazy import — googleads kütüphanesi ağır, startup'ı yavaşlatmamak için
+        from googleads import ad_manager, oauth2
+
+        key_path = _write_service_account_to_tempfile()
+
+        oauth2_client = oauth2.GoogleServiceAccountClient(
+            key_path,
+            oauth2.GetAPIScope("ad_manager"),
+        )
+
+        client = ad_manager.AdManagerClient(
+            oauth2_client,
+            "adsyield-refresher",
+            network_code=MAKROO_GAM_NETWORK_CODE,
+        )
+        _client_cache = client
+        return client
 
 
 # --- Path & Slot Helpers ---
 
 def build_app_path(gam_publisher_id: str, app_name: str) -> str:
-    """App'in GAM path'ini oluştur."""
+    """App'in GAM path prefix'ini oluştur."""
     return GAM_PATH_TEMPLATE.format(
         network_code=MAKROO_GAM_NETWORK_CODE,
         publisher_id=gam_publisher_id,
@@ -96,12 +132,9 @@ def parse_slot_from_name(name: str) -> Optional[dict]:
 
     Input: "/324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50"
     Output: {"version": 8, "format": "bnr", "platform": "aos", "cpm": Decimal("5.50")}
-
-    Parse edilemezse None döner.
     """
     if not name:
         return None
-    # Son "/" sonrasını al
     last_segment = name.rsplit("/", 1)[-1]
     m = SLOT_REGEX.match(last_segment)
     if not m:
@@ -114,10 +147,36 @@ def parse_slot_from_name(name: str) -> Optional[dict]:
     }
 
 
+def _build_full_path(unit) -> str:
+    """GAM AdUnit object'inden full path'i oluştur.
+
+    AdUnit'te parentPath (list of {id, name, adUnitCode}) ve kendi adUnitCode var.
+    Bunları birleştirip "/324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50"
+    formatına çeviriyoruz.
+    """
+    parts = []
+    parent_path = unit.get("parentPath", []) if isinstance(unit, dict) else getattr(unit, "parentPath", [])
+
+    if parent_path:
+        for parent in parent_path:
+            code = parent.get("adUnitCode") if isinstance(parent, dict) else getattr(parent, "adUnitCode", None)
+            if code:
+                parts.append(code)
+
+    own_code = unit.get("adUnitCode") if isinstance(unit, dict) else getattr(unit, "adUnitCode", None)
+    if own_code:
+        parts.append(own_code)
+
+    return "/" + "/".join(parts) if parts else ""
+
+
 # --- GAM API ---
 
 def list_ad_units_for_app(gam_publisher_id: str, app_name: str, platform: str) -> list:
-    """Bir app'in path'i altındaki tüm GAM ad unit'lerini çek.
+    """Bir app'in path'i altındaki slot pattern'ına uyan GAM ad unit'lerini çek.
+
+    Strateji: Network'teki tüm ACTIVE ad unit'leri pagination ile çek,
+    Python tarafında path prefix + slot regex ile filtrele.
 
     Args:
         gam_publisher_id: "22860626436"
@@ -125,57 +184,74 @@ def list_ad_units_for_app(gam_publisher_id: str, app_name: str, platform: str) -
         platform: "aos" veya "ios"
 
     Returns:
-        [{"name": "V8_bnr_aos_5.50", "full_code": "/324749355,22860626436/2021/Mackolik/V8_bnr_aos_5.50", ...}]
-        Sadece platform'a uyan slot'lar döner.
+        [{"id", "name", "full_code", "version", "format", "platform", "cpm"}]
     """
-    service = _get_gam_service()
-    base_path = build_app_path(gam_publisher_id, app_name)
+    from googleads import ad_manager
 
-    # GAM API'de `AdUnit` servisi kullanılır. `getAdUnitsByStatement` PQL ile sorgulanır.
-    # Ancak REST API'de Ad Manager için InventoryService doğrudan REST olarak sunulmuyor.
-    # Bu sebeple googleads-python-lib (SOAP) kullanmak daha güvenilir olabilir.
-    #
-    # ŞİMDİLİK: Basit bir placeholder yapı — yazılımcı gerçek entegrasyonu yapacak.
-    # Aşağıdaki kod AD UNIT listesi çekmek için başlangıç noktası,
-    # gerçek hayatta googleads-python-lib ile SOAP API'ye geçilmesi gerekebilir.
+    client = _get_client()
+    service = client.GetService("InventoryService", version=GAM_API_VERSION)
 
-    try:
-        # admanager REST API — ad units list
-        # NOT: Gerçek endpoint ismi GAM versiyonuna göre değişebilir
-        network_id = MAKROO_GAM_NETWORK_CODE
-        parent = f"networks/{network_id}"
+    expected_prefix = build_app_path(gam_publisher_id, app_name)
 
-        # AdUnit REST endpoint'i henüz stabil değil — bu yer tutucu
-        # Yazılımcı kendi tercihine göre googleads SOAP lib kullanabilir
-        request = service.networks().adUnits().list(
-            parent=parent,
-            filter=f'adUnitCode:"{base_path}"',
-            pageSize=500,
-        )
-        response = request.execute()
-        units = response.get("adUnits", [])
-    except HttpError as e:
-        raise RuntimeError(f"GAM API hatasi: {e}")
-    except AttributeError:
-        # REST API ad units henüz mevcut değilse, fallback:
-        # googleads-python-lib (SOAP) veya manuel HTTP istekleri kullanılmalı
-        raise RuntimeError(
-            "GAM admanager REST API adUnits endpoint'i bu SDK versiyonunda yok. "
-            "Yazilimci googleads-python-lib (SOAP) entegrasyonuna gecmeli."
+    # Pagination
+    all_units = []
+    offset = 0
+    page_size = 500
+
+    while True:
+        statement = (
+            ad_manager.StatementBuilder(version=GAM_API_VERSION)
+            .Where("status = :status")
+            .WithBindVariable("status", "ACTIVE")
+            .Limit(page_size)
+            .Offset(offset)
         )
 
-    # Filter by platform (slot parse'dan platform cikarilir)
+        try:
+            response = service.getAdUnitsByStatement(statement.ToStatement())
+        except Exception as e:
+            raise RuntimeError(f"GAM getAdUnitsByStatement hatasi: {e}")
+
+        if not response or "results" not in response or not response["results"]:
+            break
+
+        batch = response["results"]
+        all_units.extend(batch)
+
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    # Python tarafında filtrele
     result = []
-    for unit in units:
-        full_code = unit.get("adUnitCode", "")
-        parsed = parse_slot_from_name(full_code)
-        if parsed and parsed["platform"] == platform.lower():
-            result.append({
-                "id": unit.get("adUnitId", ""),
-                "name": unit.get("displayName", full_code),
-                "full_code": full_code,
-                **parsed,
-            })
+    for unit in all_units:
+        full_path = _build_full_path(unit)
+        if not full_path:
+            continue
+
+        # Path prefix kontrolü
+        if expected_prefix not in full_path:
+            continue
+
+        # Slot pattern kontrolü
+        parsed = parse_slot_from_name(full_path)
+        if not parsed:
+            continue
+
+        # Platform kontrolü
+        if parsed["platform"] != platform.lower():
+            continue
+
+        unit_id = unit.get("id") if isinstance(unit, dict) else getattr(unit, "id", None)
+        name = unit.get("name") if isinstance(unit, dict) else getattr(unit, "name", "")
+
+        result.append({
+            "id": str(unit_id) if unit_id else "",
+            "name": name or full_path,
+            "full_code": full_path,
+            **parsed,
+        })
+
     return result
 
 
@@ -194,7 +270,7 @@ def get_max_versions_by_slot(gam_publisher_id: str, app_name: str, platform: str
 
     by_slot = {}
     for unit in units:
-        key = (unit["format"], str(unit["cpm"]))
+        key = (unit["format"], f"{float(unit['cpm']):.2f}")
         current = by_slot.get(key, 0)
         if unit["version"] > current:
             by_slot[key] = unit["version"]
@@ -207,14 +283,30 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
         print("Usage: python gam_client.py <publisher_id> <app_name> [platform]")
+        print("Example: python gam_client.py 22860626436 Mackolik aos")
         sys.exit(1)
     pid = sys.argv[1]
     app = sys.argv[2]
     plat = sys.argv[3] if len(sys.argv) > 3 else "aos"
 
-    print(f"Path: {build_app_path(pid, app)}")
+    print(f"Path prefix: {build_app_path(pid, app)}")
+    print(f"Platform filter: {plat}")
+    print()
+
     try:
+        units = list_ad_units_for_app(pid, app, plat)
+        print(f"Bulunan ad unit sayisi: {len(units)}")
+        for u in units[:10]:
+            print(f"  V{u['version']} {u['format']}_{u['platform']}_{u['cpm']}  — {u['full_code']}")
+        if len(units) > 10:
+            print(f"  ... ve {len(units) - 10} tane daha")
+
+        print()
         versions = get_max_versions_by_slot(pid, app, plat)
-        print(f"Slot max versions: {versions}")
+        print("Slot max versions:")
+        for key, max_v in versions.items():
+            print(f"  {key[0]}_{plat}_{key[1]}: V{max_v}")
     except Exception as e:
         print(f"HATA: {e}")
+        import traceback
+        traceback.print_exc()

@@ -9,3 +9,4 @@ psycopg2-binary==2.9.11
 google-api-python-client==2.149.0
 google-auth==2.35.0
 google-auth-httplib2==0.2.0
+googleads==49.0.0
