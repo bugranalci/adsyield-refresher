@@ -1,204 +1,322 @@
-import re
-import requests
+"""Sync motoru — bir app için GAM'deki max versiyonları MAX waterfall ile karşılaştır
+ve güncellemeleri uygula.
+
+Yeni mantık (slot-based):
+  1. GAM'den app'in her slot'u için max version al (gam_client)
+  2. MAX'ten publisher'ın tüm ad unit'lerini çek (max_client)
+  3. Her ad unit'in ad_network_settings'inde GOOGLE network entry'lerini bul
+  4. Her entry'nin ad_network_ad_unit_id'sini parse et (slot bilgisi)
+  5. Slot'un GAM max version > MAX mevcut version ise güncelleme adayı
+  6. Dry run: sadece raporla. Canlı run: snapshot al + POST + verify
+"""
+import copy
 import time
 from datetime import datetime
-from database import log_operation, update_last_run
+from typing import Tuple, List
 
-BASE_URL = "https://o.applovin.com/mediation/v1"
-MAX_RATE_LIMIT_RETRIES = 5
+from gam_client import (
+    parse_slot_from_name, build_ad_unit_code, get_max_versions_by_slot,
+)
+from max_client import list_all_ad_units, get_ad_unit, post_ad_unit
+from database import (
+    log_operation, update_app_last_run, create_snapshot, upsert_slot_cache,
+    clear_slot_cache,
+)
 
-def get_headers(management_key):
-    return {
-        "Api-Key": management_key,
-        "Content-Type": "application/json"
-    }
 
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+def _log(msg: str):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [ENGINE] {msg}")
 
-def get_all_ad_units(management_key):
-    all_units = []
-    limit = 100
-    offset = 0
-    headers = get_headers(management_key)
-    rate_limit_retries = 0
-    while True:
-        url = f"{BASE_URL}/ad_units?fields=ad_network_settings&limit={limit}&offset={offset}"
-        try:
-            r = requests.get(url, headers=headers, timeout=30)
-            if r.status_code == 429:
-                rate_limit_retries += 1
-                if rate_limit_retries > MAX_RATE_LIMIT_RETRIES:
-                    log(f"HATA: Rate limit {MAX_RATE_LIMIT_RETRIES} kez asildi, durduruluyor")
-                    break
-                log(f"Rate limit — 60 saniye bekleniyor... (deneme {rate_limit_retries}/{MAX_RATE_LIMIT_RETRIES})")
-                time.sleep(60)
-                continue
-            rate_limit_retries = 0
-            if r.status_code != 200:
-                log(f"HATA: {r.status_code} — {r.text[:200]}")
-                break
-            data = r.json()
-            if not data:
-                break
-            all_units.extend(data)
-            log(f"  {len(all_units)} ad unit cekildi...")
-            if len(data) < limit:
-                break
-            offset += limit
-            time.sleep(0.2)
-        except requests.exceptions.Timeout:
-            log("HATA: Request timeout (30s)")
-            break
-        except Exception as e:
-            log(f"HATA: {e}")
-            break
-    return all_units
 
-def find_matches(ad_unit, publisher_tag, find_string):
-    """Ad unit içinde publisher_tag + find_string eşleşen entry'leri bul.
-    Returns: list of (old_id, new_id) tuples
+def _extract_google_entries(ad_unit: dict, platform: str) -> List[tuple]:
+    """Bir MAX ad unit'inin GOOGLE network entry'lerini çıkar.
+
+    Returns:
+        [(network_obj, network_name, unit_dict, slot_info), ...]
+        slot_info = {"version", "format", "platform", "cpm"} or None
     """
-    matches = []
+    results = []
     for network_obj in ad_unit.get("ad_network_settings", []):
         for network_name, config in network_obj.items():
             if "GOOGLE" not in network_name:
                 continue
             for unit in config.get("ad_network_ad_units", []):
                 unit_id = unit.get("ad_network_ad_unit_id", "")
-                if publisher_tag in unit_id and re.search(re.escape(find_string), unit_id):
-                    matches.append(unit_id)
-    return matches
+                slot_info = parse_slot_from_name(unit_id)
+                if slot_info and slot_info["platform"] == platform.lower():
+                    results.append((network_obj, network_name, unit, slot_info))
+    return results
 
-def apply_update(ad_unit, management_key, publisher_tag, find_string, replace_string):
-    """Bir ad_unit'teki TÜM eşleşen entry'leri tek seferde güncelle ve POST at.
-    Returns: (ok, err, expected_new_ids)
+
+def compute_updates_for_app(app: dict, gam_max_versions: dict, ad_units: list) -> list:
+    """Her MAX ad unit'te güncellenmesi gereken entry'leri hesapla.
+
+    Args:
+        app: {"id", "gam_app_name", "platform", "publisher": {...}}
+        gam_max_versions: {(format, cpm_str): max_version}
+        ad_units: MAX'ten çekilen ad unit listesi
+
+    Returns:
+        [
+          {
+            "max_ad_unit": <full ad_unit dict>,
+            "entries": [
+              {
+                "old_id": "/324.../V7_bnr_aos_5.50",
+                "new_id": "/324.../V8_bnr_aos_5.50",
+                "slot": {...},
+                "new_version": 8,
+              },
+              ...
+            ]
+          },
+          ...
+        ]
     """
-    headers = get_headers(management_key)
-    expected_new_ids = []
+    platform = app["platform"]
+    gam_app_name = app["gam_app_name"]
+    gam_publisher_id = app["gam_publisher_id"]
 
-    # In-place değiştir
-    for network_obj in ad_unit.get("ad_network_settings", []):
-        for network_name, config in network_obj.items():
-            if "GOOGLE" not in network_name:
+    updates = []
+    for ad_unit in ad_units:
+        entries_to_update = []
+        google_entries = _extract_google_entries(ad_unit, platform)
+
+        for network_obj, network_name, unit, slot in google_entries:
+            # Sadece bu app'e ait ad unit'leri güncelle (gam_app_name path'inde olmalı)
+            unit_id = unit.get("ad_network_ad_unit_id", "")
+            if f"/{gam_app_name}/" not in unit_id:
                 continue
-            for unit in config.get("ad_network_ad_units", []):
-                unit_id = unit.get("ad_network_ad_unit_id", "")
-                if publisher_tag in unit_id and re.search(re.escape(find_string), unit_id):
-                    new_id = re.sub(re.escape(find_string), replace_string, unit_id, count=1)
-                    unit["ad_network_ad_unit_id"] = new_id
-                    expected_new_ids.append(new_id)
 
-    body = {
-        "id":                    ad_unit["id"],
-        "name":                  ad_unit["name"],
-        "platform":              ad_unit["platform"],
-        "ad_format":             ad_unit["ad_format"],
-        "package_name":          ad_unit["package_name"],
-        "has_active_experiment": ad_unit.get("has_active_experiment", False),
-        "disabled":              ad_unit.get("disabled", False),
-        "ad_network_settings":   ad_unit["ad_network_settings"]
-    }
+            key = (slot["format"], f"{float(slot['cpm']):.2f}")
+            gam_max = gam_max_versions.get(key)
+            if gam_max is None:
+                # GAM'de bu slot yok — elle manipüle edilmiş olabilir, atla
+                continue
+            if slot["version"] >= gam_max:
+                # MAX zaten güncel
+                continue
 
-    url = f"{BASE_URL}/ad_unit/{ad_unit['id']}"
-    try:
-        r = requests.post(url, headers=headers, json=body, timeout=30)
-        if r.status_code != 200:
-            return False, f"POST hatasi: {r.status_code} — {r.text[:200]}", expected_new_ids
-    except Exception as e:
-        return False, str(e), expected_new_ids
+            new_id = build_ad_unit_code(
+                gam_publisher_id=gam_publisher_id,
+                app_name=gam_app_name,
+                version=gam_max,
+                format_=slot["format"],
+                platform=slot["platform"],
+                cpm=slot["cpm"],
+            )
+            entries_to_update.append({
+                "network_obj": network_obj,
+                "network_name": network_name,
+                "unit_ref": unit,  # dict reference — in-place değiştirilecek
+                "old_id": unit_id,
+                "new_id": new_id,
+                "slot": slot,
+                "new_version": gam_max,
+            })
 
-    # Verify — her expected_new_id'nin gerçekten yazılıp yazılmadığını kontrol et
-    time.sleep(1)
-    try:
-        r2 = requests.get(f"{url}?fields=ad_network_settings", headers=headers, timeout=30)
-        if r2.status_code == 200:
-            data = r2.json()
-            verified_ids = set()
-            for network_obj in data.get("ad_network_settings", []):
-                for network_name, config in network_obj.items():
-                    if "GOOGLE" not in network_name:
-                        continue
-                    for unit in config.get("ad_network_ad_units", []):
-                        uid = unit.get("ad_network_ad_unit_id", "")
-                        if uid in expected_new_ids:
-                            verified_ids.add(uid)
-            if len(verified_ids) == len(expected_new_ids):
-                return True, "", expected_new_ids
-            missing = set(expected_new_ids) - verified_ids
-            return False, f"Dogrulama basarisiz — eksik: {missing}", expected_new_ids
-    except Exception as e:
-        return False, f"Dogrulama hatasi: {e}", expected_new_ids
-    return False, "Dogrulama yapilamadi", expected_new_ids
+        if entries_to_update:
+            updates.append({
+                "max_ad_unit": ad_unit,
+                "entries": entries_to_update,
+            })
+    return updates
 
-def run_refresh(publisher, dry_run=False):
-    name         = publisher["name"]
-    mgmt_key     = publisher["management_key"]
-    tag          = publisher["publisher_tag"]
-    find_str     = publisher["find_string"]
-    replace_str  = publisher["replace_string"]
-    publisher_id = publisher["id"]
 
+def sync_app(app: dict, run_job_id: str, dry_run: bool = True) -> dict:
+    """Bir app için tam sync akışı.
+
+    Args:
+        app: {"id", "label", "gam_app_name", "platform", "publisher_id",
+              "gam_publisher_id", "management_key", "publisher_name"}
+        run_job_id: Snapshot ve log ilişkisi için
+        dry_run: True ise MAX'e yazmaz
+
+    Returns:
+        {
+            "status": "done" | "no_match",
+            "matched": int,
+            "success": int,
+            "failed": int,
+            "skipped": int,
+            "gam_versions": dict,
+            "dry_run": bool,
+        }
+    """
     mode = "DRY-RUN" if dry_run else "CANLI"
-    log(f"--- {name} [{mode}] basladi ---")
-    log(f"  Find: {find_str} -> Replace: {replace_str}")
+    _log(f"--- {app['label']} [{mode}] basladi ---")
 
-    ad_units = get_all_ad_units(mgmt_key)
-    log(f"  {len(ad_units)} ad unit tarandi")
+    mgmt_key = app["management_key"]
+    platform = app["platform"]
+
+    # 1. GAM'den max versiyonları çek
+    _log(f"  GAM'den slot durumu cekiliyor: {app['gam_app_name']}/{platform}")
+    try:
+        gam_versions = get_max_versions_by_slot(
+            app["gam_publisher_id"], app["gam_app_name"], platform
+        )
+    except Exception as e:
+        _log(f"  GAM HATA: {e}")
+        return {"status": "gam_error", "matched": 0, "success": 0, "failed": 0,
+                "skipped": 0, "gam_versions": {}, "dry_run": dry_run,
+                "error": str(e)}
+
+    _log(f"  GAM max versions: {gam_versions}")
+
+    # Slot cache'i güncelle
+    clear_slot_cache(app["id"])
+    for (fmt, cpm_str), max_v in gam_versions.items():
+        upsert_slot_cache(app["id"], fmt, platform, cpm_str, max_v)
+
+    # 2. MAX'ten ad unit'leri çek
+    ad_units = list_all_ad_units(mgmt_key)
+    _log(f"  {len(ad_units)} MAX ad unit tarandi")
+
+    # 3. Güncellemeleri hesapla
+    updates = compute_updates_for_app(app, gam_versions, ad_units)
+    matched = sum(len(u["entries"]) for u in updates)
+    skipped = len(ad_units) - len(updates)
+
+    _log(f"  {matched} entry guncellenecek ({len(updates)} ad unit'te)")
+
+    if matched == 0:
+        update_app_last_run(app["id"])
+        _log(f"--- {app['label']} bitti | eslesme yok ---")
+        return {"status": "no_match", "matched": 0, "success": 0, "failed": 0,
+                "skipped": skipped, "gam_versions": gam_versions, "dry_run": dry_run}
 
     success = 0
-    failed  = 0
-    skipped = 0
-    matched = 0
+    failed = 0
 
-    for ad_unit in ad_units:
-        matches = find_matches(ad_unit, tag, find_str)
-        if not matches:
-            skipped += 1
-            continue
+    for update in updates:
+        ad_unit = update["max_ad_unit"]
+        entries = update["entries"]
 
-        matched += len(matches)
-
-        # Log her match'i
-        for old_id in matches:
-            new_id = re.sub(re.escape(find_str), replace_str, old_id, count=1)
-            log(f"  BULUNDU: {ad_unit['name']} ({ad_unit['id']})")
-            log(f"    {old_id}")
-            log(f"    -> {new_id}")
+        # Log her entry'i
+        for e in entries:
+            _log(f"  BULUNDU: {ad_unit.get('name', '?')} — V{e['slot']['version']} → V{e['new_version']}")
 
         if dry_run:
-            for old_id in matches:
-                new_id = re.sub(re.escape(find_str), replace_str, old_id, count=1)
-                log(f"    [DRY-RUN] Yazilmadi")
-                log_operation(publisher_id, name, ad_unit["id"], ad_unit["name"], old_id, new_id, "DRY_RUN")
+            for e in entries:
+                log_operation(
+                    publisher_id=app["publisher_id"],
+                    publisher_name=app.get("publisher_name", ""),
+                    app_id=app["id"], app_label=app["label"],
+                    run_job_id=run_job_id,
+                    ad_unit_id=ad_unit["id"], ad_unit_name=ad_unit.get("name", ""),
+                    old_value=e["old_id"], new_value=e["new_id"],
+                    status="DRY_RUN",
+                )
             continue
 
-        # Canlı run — ad_unit başına TEK POST
-        ok, err, expected_new_ids = apply_update(ad_unit, mgmt_key, tag, find_str, replace_str)
+        # Canlı run: önce snapshot al (orijinal full config)
+        snapshot_config = copy.deepcopy(ad_unit)
+        for e in entries:
+            create_snapshot(
+                app_id=app["id"],
+                run_job_id=run_job_id,
+                max_ad_unit_id=ad_unit["id"],
+                max_ad_unit_name=ad_unit.get("name", ""),
+                old_id=e["old_id"],
+                new_id=e["new_id"],
+                full_config=snapshot_config,
+            )
 
-        for old_id in matches:
-            new_id = re.sub(re.escape(find_str), replace_str, old_id, count=1)
+        # Ad unit'i in-place güncelle (tüm entry'ler için)
+        for e in entries:
+            e["unit_ref"]["ad_network_ad_unit_id"] = e["new_id"]
+
+        # POST
+        ok, err = post_ad_unit(mgmt_key, ad_unit)
+
+        # Verify
+        if ok:
+            time.sleep(1)
+            verified = _verify_updates(mgmt_key, ad_unit["id"], entries, platform)
+            if not verified:
+                ok = False
+                err = "Dogrulama basarisiz"
+
+        for e in entries:
             if ok:
-                log(f"    BASARILI + DOGRULANDI")
-                log_operation(publisher_id, name, ad_unit["id"], ad_unit["name"], old_id, new_id, "SUCCESS")
+                log_operation(
+                    publisher_id=app["publisher_id"],
+                    publisher_name=app.get("publisher_name", ""),
+                    app_id=app["id"], app_label=app["label"],
+                    run_job_id=run_job_id,
+                    ad_unit_id=ad_unit["id"], ad_unit_name=ad_unit.get("name", ""),
+                    old_value=e["old_id"], new_value=e["new_id"],
+                    status="SUCCESS",
+                )
                 success += 1
             else:
-                log(f"    HATA: {err}")
-                log_operation(publisher_id, name, ad_unit["id"], ad_unit["name"], old_id, new_id, "FAILED", err)
+                log_operation(
+                    publisher_id=app["publisher_id"],
+                    publisher_name=app.get("publisher_name", ""),
+                    app_id=app["id"], app_label=app["label"],
+                    run_job_id=run_job_id,
+                    ad_unit_id=ad_unit["id"], ad_unit_name=ad_unit.get("name", ""),
+                    old_value=e["old_id"], new_value=e["new_id"],
+                    status="FAILED", error_message=err,
+                )
                 failed += 1
 
         time.sleep(0.3)
 
-    update_last_run(publisher_id)
-    log(f"--- {name} bitti | {success} basarili | {failed} hatali | {skipped} atlanan ---")
-    return success, failed, skipped, matched
+    update_app_last_run(app["id"])
+    _log(f"--- {app['label']} bitti | {success} basarili | {failed} hatali | {skipped} atlanan ---")
 
-if __name__ == "__main__":
-    from database import init_db, get_active_publishers
-    init_db()
-    publishers = get_active_publishers()
-    if not publishers:
-        log("Kayitli aktif publisher yok.")
-    else:
-        for publisher in publishers:
-            run_refresh(publisher, dry_run=False)
+    return {
+        "status": "done",
+        "matched": matched,
+        "success": success,
+        "failed": failed,
+        "skipped": skipped,
+        "gam_versions": gam_versions,
+        "dry_run": dry_run,
+    }
+
+
+def _verify_updates(management_key: str, ad_unit_id: str, entries: list, platform: str) -> bool:
+    """POST sonrası her expected new_id'nin gerçekten yazıldığını doğrula."""
+    data = get_ad_unit(management_key, ad_unit_id)
+    if not data:
+        return False
+
+    expected = {e["new_id"] for e in entries}
+    found = set()
+    for network_obj in data.get("ad_network_settings", []):
+        for network_name, config in network_obj.items():
+            if "GOOGLE" not in network_name:
+                continue
+            for unit in config.get("ad_network_ad_units", []):
+                uid = unit.get("ad_network_ad_unit_id", "")
+                if uid in expected:
+                    found.add(uid)
+    return expected == found
+
+
+# --- Rollback ---
+
+def rollback_snapshot(snapshot: dict, management_key: str) -> Tuple[bool, str]:
+    """Bir snapshot'ı kullanarak MAX waterfall'daki ad unit'i eski haline döndür.
+
+    Args:
+        snapshot: DB'den gelen snapshot dict (full_config içerir)
+        management_key: MAX API key
+
+    Returns:
+        (success, error_message)
+    """
+    if not snapshot.get("full_config"):
+        return False, "Snapshot'ta full_config yok"
+
+    # full_config JSON olarak saklandı — zaten dict veya str olabilir
+    full_config = snapshot["full_config"]
+    if isinstance(full_config, str):
+        import json
+        full_config = json.loads(full_config)
+
+    # Snapshot'taki tam config ile POST at
+    ok, err = post_ad_unit(management_key, full_config)
+    return ok, err

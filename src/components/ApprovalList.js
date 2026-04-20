@@ -16,7 +16,6 @@ function ApprovalList() {
 
   useEffect(() => { fetchApprovals(); }, []);
 
-  // URL'den job_id varsa otomatik detay aç
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const jobId = params.get('job_id');
@@ -39,7 +38,8 @@ function ApprovalList() {
 
   const handleConfirm = async () => {
     if (!detail) return;
-    if (!window.confirm(`${detail.publisher_name} icin CANLI RUN baslatilacak. Emin misiniz?`)) return;
+    const name = detail.publisher_name ? `${detail.publisher_name} - ${detail.app_label}` : detail.app_label;
+    if (!window.confirm(`${name} icin CANLI RUN baslatilacak. Emin misiniz?`)) return;
 
     setConfirming(true);
     setConfirmStatus('Onaylaniyor...');
@@ -57,7 +57,7 @@ function ApprovalList() {
       if (res.run_job_id) {
         const result = await pollJob(res.run_job_id);
         if (result.status === 'done') {
-          setConfirmStatus(`Tamamlandi! Basarili: ${result.success}, Hatali: ${result.failed}`);
+          setConfirmStatus(`Tamamlandi. Basarili: ${result.success}, Hatali: ${result.failed}`);
         } else if (result.status === 'error') {
           setConfirmStatus(`Hata: ${result.message}`);
         } else {
@@ -74,7 +74,6 @@ function ApprovalList() {
 
   if (loading) return <div className="empty-state">Loading...</div>;
 
-  // Detay görünümü
   if (detail) {
     return (
       <div className="approval-detail">
@@ -86,25 +85,24 @@ function ApprovalList() {
         <div className="approval-info">
           <table className="table">
             <tbody>
-              <tr><td className="date-cell">Publisher</td><td className="name-cell">{detail.publisher_name}</td></tr>
-              <tr><td className="date-cell">Find</td><td><code className="find">{detail.find_string}</code></td></tr>
-              <tr><td className="date-cell">Replace</td><td><code className="replace">{detail.replace_string}</code></td></tr>
-              <tr><td className="date-cell">Eslesme</td><td style={{color:'#00ff88', fontWeight:'bold'}}>{detail.matched}</td></tr>
-              <tr><td className="date-cell">Atlanan</td><td>{detail.skipped}</td></tr>
+              <tr><td className="date-cell">Publisher</td><td className="name-cell">{detail.publisher_name || '—'}</td></tr>
+              <tr><td className="date-cell">App</td><td className="name-cell">{detail.app_label || '—'}</td></tr>
+              <tr><td className="date-cell">Platform</td><td>{(detail.app_platform || '—').toUpperCase()}</td></tr>
+              <tr><td className="date-cell">Guncellenecek</td><td style={{color:'#00ff88', fontWeight:'bold'}}>{detail.matched}</td></tr>
               <tr><td className="date-cell">Durum</td><td>
                 <span className={`badge ${detail.status === 'pending' ? 'badge-dry' : detail.status === 'approved' ? 'badge-active' : 'badge-inactive'}`}>
                   {detail.status.toUpperCase()}
                 </span>
               </td></tr>
               <tr><td className="date-cell">Olusturulma</td><td className="date-cell">{new Date(detail.created_at).toLocaleString()}</td></tr>
-              <tr><td className="date-cell">Son gecerlilik</td><td className="date-cell">{new Date(detail.expires_at).toLocaleString()}</td></tr>
+              <tr><td className="date-cell">Son gecerlilik</td><td className="date-cell">{detail.expires_at ? new Date(detail.expires_at).toLocaleString() : '—'}</td></tr>
             </tbody>
           </table>
         </div>
 
         {detail.logs && detail.logs.length > 0 && (
           <>
-            <h3 className="section-title" style={{marginTop: 24, marginBottom: 16}}>DRY RUN SONUCLARI</h3>
+            <h3 className="section-title" style={{fontSize: 14, marginTop: 24, marginBottom: 16}}>DRY RUN SONUCLARI</h3>
             <table className="table">
               <thead>
                 <tr>
@@ -114,7 +112,7 @@ function ApprovalList() {
                 </tr>
               </thead>
               <tbody>
-                {detail.logs.map((log, i) => (
+                {detail.logs.filter(l => l.status === 'DRY_RUN').map((log, i) => (
                   <tr key={i}>
                     <td>{log.ad_unit_name}</td>
                     <td><code className="find">{log.old_value}</code></td>
@@ -145,7 +143,6 @@ function ApprovalList() {
     );
   }
 
-  // Liste görünümü
   return (
     <div className="approval-list">
       <div className="section-header">
@@ -160,8 +157,8 @@ function ApprovalList() {
             <tr>
               <th>Tarih</th>
               <th>Publisher</th>
-              <th>Find → Replace</th>
-              <th>Eslesme</th>
+              <th>App</th>
+              <th>Guncellenecek</th>
               <th>Durum</th>
               <th>Islem</th>
             </tr>
@@ -170,16 +167,10 @@ function ApprovalList() {
             {approvals.map(a => (
               <tr key={a.job_id}>
                 <td className="date-cell">{new Date(a.created_at).toLocaleString()}</td>
-                <td className="name-cell">{a.publisher_name}</td>
-                <td>
-                  <code className="find">{a.find_string}</code>
-                  <span style={{color:'#555', margin:'0 6px'}}>→</span>
-                  <code className="replace">{a.replace_string}</code>
-                </td>
+                <td className="name-cell">{a.publisher_name || '—'}</td>
+                <td>{a.app_label || '—'}</td>
                 <td style={{color:'#00ff88', fontWeight:'bold'}}>{a.matched}</td>
-                <td>
-                  <span className="badge badge-dry">PENDING</span>
-                </td>
+                <td><span className="badge badge-dry">PENDING</span></td>
                 <td>
                   <button className="btn btn-primary" onClick={() => handleViewDetail(a.job_id)}>
                     Detay ve Onayla

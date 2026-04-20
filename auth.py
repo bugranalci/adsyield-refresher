@@ -2,7 +2,8 @@ import os
 import jwt
 import bcrypt
 from datetime import datetime, timedelta
-from fastapi import Request, HTTPException
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 JWT_SECRET = os.getenv("JWT_SECRET", "adsyield-dev-secret-change-in-production")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
@@ -62,12 +63,12 @@ async def auth_middleware(request: Request, call_next):
     # Token kontrolü
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token gerekli")
+        return JSONResponse(status_code=401, content={"error": "Token gerekli"})
 
     token = auth_header.split(" ", 1)[1]
     email = verify_token(token)
     if not email:
-        raise HTTPException(status_code=401, detail="Gecersiz veya suresi dolmus token")
+        return JSONResponse(status_code=401, content={"error": "Gecersiz veya suresi dolmus token"})
 
     request.state.user = email
     return await call_next(request)

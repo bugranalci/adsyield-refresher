@@ -489,3 +489,12 @@ code.replace {
   color: var(--text-faint);
   letter-spacing: 0.5px;
 }
+
+.clickable {
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.clickable:hover {
+  color: var(--accent) !important;
+}

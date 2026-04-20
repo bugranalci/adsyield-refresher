@@ -1,274 +1,431 @@
-import sqlite3
-import os
+"""Veritabanı CRUD fonksiyonları — SQLAlchemy tabanlı.
+
+db.py'deki modelleri kullanır. Eski sqlite3 tabanlı API ile uyumlu
+fonksiyon isimleri korundu ki api.py ve engine.py minimum değişiklikle çalışabilsin.
+"""
 from datetime import datetime, timedelta
+from sqlalchemy import select, delete, update, and_
+from db import (
+    init_db as _init_db,
+    get_session,
+    Publisher, App, SlotCache, Snapshot, JobLog, PendingApproval,
+)
 
-DB_PATH = os.getenv("DB_PATH", "adsyield.db")
-
-def get_conn():
-    """Thread-safe connection al, foreign key enforcement aç"""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.row_factory = sqlite3.Row
-    return conn
 
 def init_db():
-    """Veritabanını ve tabloları oluştur"""
-    conn = get_conn()
-    c = conn.cursor()
+    _init_db()
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS publishers (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            management_key  TEXT NOT NULL,
-            publisher_tag   TEXT NOT NULL,
-            find_string     TEXT NOT NULL,
-            replace_string  TEXT NOT NULL,
-            frequency_days  INTEGER DEFAULT 2,
-            mode            TEXT DEFAULT 'manual',
-            notify_email    TEXT DEFAULT '',
-            current_version INTEGER DEFAULT 1,
-            active          INTEGER DEFAULT 1,
-            last_run        TEXT,
-            created_at      TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS job_logs (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            publisher_id    INTEGER,
-            publisher_name  TEXT,
-            ad_unit_id      TEXT,
-            ad_unit_name    TEXT,
-            old_value       TEXT,
-            new_value       TEXT,
-            status          TEXT,
-            error_message   TEXT,
-            ran_at          TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (publisher_id) REFERENCES publishers(id)
-        )
-    ''')
+def _to_dict(obj):
+    """SQLAlchemy objesi → dict"""
+    if obj is None:
+        return None
+    from decimal import Decimal
+    result = {}
+    for col in obj.__table__.columns:
+        val = getattr(obj, col.name)
+        if isinstance(val, datetime):
+            val = val.isoformat()
+        elif isinstance(val, Decimal):
+            val = float(val)
+        result[col.name] = val
+    return result
 
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pending_approvals (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            publisher_id    INTEGER NOT NULL,
-            job_id          TEXT NOT NULL UNIQUE,
-            matched         INTEGER DEFAULT 0,
-            skipped         INTEGER DEFAULT 0,
-            dry_run_data    TEXT,
-            status          TEXT DEFAULT 'pending',
-            created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-            expires_at      TEXT,
-            approved_at     TEXT,
-            FOREIGN KEY (publisher_id) REFERENCES publishers(id)
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-    print("[DB] Veritabanı hazır")
 
 # --- Publisher CRUD ---
 
-def add_publisher(name, management_key, publisher_tag, find_string, replace_string,
-                  frequency_days=2, mode='manual', notify_email=''):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO publishers
-        (name, management_key, publisher_tag, find_string, replace_string, frequency_days, mode, notify_email)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (name, management_key, publisher_tag, find_string, replace_string, frequency_days, mode, notify_email))
-    conn.commit()
-    publisher_id = c.lastrowid
-    conn.close()
-    print(f"[DB] Publisher eklendi: {name} (id={publisher_id})")
-    return publisher_id
+def add_publisher(name, management_key, gam_publisher_id, publisher_tag=None,
+                  find_string=None, replace_string=None,
+                  frequency_days=2, mode="manual", notify_email=""):
+    """Yeni publisher ekle.
 
-def get_active_publishers():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT * FROM publishers WHERE active = 1")
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    Not: publisher_tag/find_string/replace_string eski API uyumluluğu için kabul edilir
+    ama yeni sistemde kullanılmaz, ignore edilir.
+    """
+    with get_session() as s:
+        p = Publisher(
+            name=name,
+            management_key=management_key,
+            gam_publisher_id=gam_publisher_id or "",
+            frequency_days=frequency_days,
+            mode=mode,
+            notify_email=notify_email,
+        )
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        print(f"[DB] Publisher eklendi: {name} (id={p.id})")
+        return p.id
+
 
 def get_all_publishers():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT * FROM publishers ORDER BY id")
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    with get_session() as s:
+        rows = s.execute(select(Publisher).order_by(Publisher.id)).scalars().all()
+        return [_to_dict(r) for r in rows]
 
-def update_publisher(publisher_id, find_string, replace_string, frequency_days, active,
-                     mode=None, notify_email=None):
-    conn = get_conn()
-    c = conn.cursor()
-    fields = "find_string = ?, replace_string = ?, frequency_days = ?, active = ?"
-    params = [find_string, replace_string, frequency_days, active]
-    if mode is not None:
-        fields += ", mode = ?"
-        params.append(mode)
-    if notify_email is not None:
-        fields += ", notify_email = ?"
-        params.append(notify_email)
-    params.append(publisher_id)
-    c.execute(f"UPDATE publishers SET {fields} WHERE id = ?", params)
-    updated = c.rowcount
-    conn.commit()
-    conn.close()
-    return updated > 0
+
+def get_active_publishers():
+    with get_session() as s:
+        rows = s.execute(select(Publisher).where(Publisher.active == 1)).scalars().all()
+        return [_to_dict(r) for r in rows]
+
+
+def get_publisher(publisher_id):
+    with get_session() as s:
+        p = s.get(Publisher, publisher_id)
+        return _to_dict(p)
+
+
+def update_publisher(publisher_id, active=None, frequency_days=None,
+                     mode=None, notify_email=None, gam_publisher_id=None,
+                     # eski API uyumluluğu
+                     find_string=None, replace_string=None):
+    with get_session() as s:
+        p = s.get(Publisher, publisher_id)
+        if not p:
+            return False
+        if active is not None:
+            p.active = active
+        if frequency_days is not None:
+            p.frequency_days = frequency_days
+        if mode is not None:
+            p.mode = mode
+        if notify_email is not None:
+            p.notify_email = notify_email
+        if gam_publisher_id is not None:
+            p.gam_publisher_id = gam_publisher_id
+        s.commit()
+        return True
+
 
 def delete_publisher(publisher_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM pending_approvals WHERE publisher_id = ?", (publisher_id,))
-    c.execute("DELETE FROM job_logs WHERE publisher_id = ?", (publisher_id,))
-    c.execute("DELETE FROM publishers WHERE id = ?", (publisher_id,))
-    deleted = c.rowcount
-    conn.commit()
-    conn.close()
-    return deleted > 0
+    with get_session() as s:
+        p = s.get(Publisher, publisher_id)
+        if not p:
+            return False
+        s.delete(p)  # cascade ile apps, snapshots, slot_cache da silinir
+        s.commit()
+        return True
+
 
 def update_last_run(publisher_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute(
-        "UPDATE publishers SET last_run = ? WHERE id = ?",
-        (datetime.now().isoformat(), publisher_id)
-    )
-    conn.commit()
-    conn.close()
+    with get_session() as s:
+        p = s.get(Publisher, publisher_id)
+        if p:
+            p.last_run = datetime.utcnow()
+            s.commit()
+
+
+# --- App CRUD ---
+
+def add_app(publisher_id, label, gam_app_name, platform):
+    with get_session() as s:
+        a = App(
+            publisher_id=publisher_id,
+            label=label,
+            gam_app_name=gam_app_name,
+            platform=platform,
+        )
+        s.add(a)
+        s.commit()
+        s.refresh(a)
+        print(f"[DB] App eklendi: {label} (id={a.id})")
+        return a.id
+
+
+def get_apps_by_publisher(publisher_id):
+    with get_session() as s:
+        rows = s.execute(
+            select(App).where(App.publisher_id == publisher_id).order_by(App.id)
+        ).scalars().all()
+        return [_to_dict(r) for r in rows]
+
+
+def get_app(app_id):
+    with get_session() as s:
+        a = s.get(App, app_id)
+        if not a:
+            return None
+        d = _to_dict(a)
+        # Publisher bilgisini de ekle (joined)
+        if a.publisher:
+            d["publisher_name"] = a.publisher.name
+            d["gam_publisher_id"] = a.publisher.gam_publisher_id
+            d["management_key"] = a.publisher.management_key
+        return d
+
+
+def update_app(app_id, label=None, gam_app_name=None, platform=None, active=None):
+    with get_session() as s:
+        a = s.get(App, app_id)
+        if not a:
+            return False
+        if label is not None:
+            a.label = label
+        if gam_app_name is not None:
+            a.gam_app_name = gam_app_name
+        if platform is not None:
+            a.platform = platform
+        if active is not None:
+            a.active = active
+        s.commit()
+        return True
+
+
+def delete_app(app_id):
+    with get_session() as s:
+        a = s.get(App, app_id)
+        if not a:
+            return False
+        s.delete(a)
+        s.commit()
+        return True
+
+
+def update_app_last_run(app_id):
+    with get_session() as s:
+        a = s.get(App, app_id)
+        if a:
+            a.last_run = datetime.utcnow()
+            s.commit()
+
+
+# --- Slot Cache ---
+
+def upsert_slot_cache(app_id, format_, platform, cpm, max_version):
+    """Slot varsa update, yoksa insert."""
+    with get_session() as s:
+        existing = s.execute(
+            select(SlotCache).where(and_(
+                SlotCache.app_id == app_id,
+                SlotCache.format == format_,
+                SlotCache.platform == platform,
+                SlotCache.cpm == cpm,
+            ))
+        ).scalar_one_or_none()
+        if existing:
+            existing.max_version = max_version
+            existing.synced_at = datetime.utcnow()
+        else:
+            s.add(SlotCache(
+                app_id=app_id, format=format_, platform=platform,
+                cpm=cpm, max_version=max_version,
+            ))
+        s.commit()
+
+
+def get_slot_cache(app_id):
+    with get_session() as s:
+        rows = s.execute(
+            select(SlotCache).where(SlotCache.app_id == app_id)
+        ).scalars().all()
+        return [_to_dict(r) for r in rows]
+
+
+def clear_slot_cache(app_id):
+    with get_session() as s:
+        s.execute(delete(SlotCache).where(SlotCache.app_id == app_id))
+        s.commit()
+
+
+# --- Snapshot ---
+
+def create_snapshot(app_id, run_job_id, max_ad_unit_id, max_ad_unit_name,
+                    old_id, new_id, full_config=None):
+    with get_session() as s:
+        snap = Snapshot(
+            app_id=app_id,
+            run_job_id=run_job_id,
+            max_ad_unit_id=max_ad_unit_id,
+            max_ad_unit_name=max_ad_unit_name or "",
+            network_ad_unit_id_old=old_id,
+            network_ad_unit_id_new=new_id,
+            full_config=full_config,
+        )
+        s.add(snap)
+        s.commit()
+        s.refresh(snap)
+        return snap.id
+
+
+def get_snapshots(app_id=None, run_job_id=None, status=None):
+    with get_session() as s:
+        q = select(Snapshot)
+        if app_id is not None:
+            q = q.where(Snapshot.app_id == app_id)
+        if run_job_id is not None:
+            q = q.where(Snapshot.run_job_id == run_job_id)
+        if status is not None:
+            q = q.where(Snapshot.status == status)
+        q = q.order_by(Snapshot.created_at.desc())
+        rows = s.execute(q).scalars().all()
+        return [_to_dict(r) for r in rows]
+
+
+def get_snapshot(snapshot_id):
+    with get_session() as s:
+        snap = s.get(Snapshot, snapshot_id)
+        return _to_dict(snap)
+
+
+def mark_snapshot_rolled_back(snapshot_id):
+    with get_session() as s:
+        snap = s.get(Snapshot, snapshot_id)
+        if not snap:
+            return False
+        snap.status = "rolled_back"
+        snap.rolled_back_at = datetime.utcnow()
+        s.commit()
+        return True
+
+
+def cleanup_old_snapshots(days=30):
+    """30 günden eski snapshot'ları sil."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    with get_session() as s:
+        result = s.execute(
+            delete(Snapshot).where(Snapshot.created_at < cutoff)
+        )
+        s.commit()
+        return result.rowcount
+
 
 # --- Job Logs ---
 
-def log_operation(publisher_id, publisher_name, ad_unit_id, ad_unit_name, old_value, new_value, status, error_message=""):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO job_logs
-        (publisher_id, publisher_name, ad_unit_id, ad_unit_name, old_value, new_value, status, error_message)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (publisher_id, publisher_name, ad_unit_id, ad_unit_name, old_value, new_value, status, error_message))
-    conn.commit()
-    conn.close()
-
-def get_job_logs(publisher_id=None, limit=100):
-    conn = get_conn()
-    c = conn.cursor()
-    if publisher_id:
-        c.execute(
-            "SELECT * FROM job_logs WHERE publisher_id = ? ORDER BY ran_at DESC LIMIT ?",
-            (publisher_id, limit)
+def log_operation(publisher_id=None, publisher_name="", app_id=None, app_label="",
+                  run_job_id="", ad_unit_id="", ad_unit_name="",
+                  old_value="", new_value="", status="", error_message=""):
+    with get_session() as s:
+        log = JobLog(
+            publisher_id=publisher_id,
+            publisher_name=publisher_name,
+            app_id=app_id,
+            app_label=app_label,
+            run_job_id=run_job_id,
+            ad_unit_id=ad_unit_id,
+            ad_unit_name=ad_unit_name,
+            old_value=old_value,
+            new_value=new_value,
+            status=status,
+            error_message=error_message,
         )
-    else:
-        c.execute("SELECT * FROM job_logs ORDER BY ran_at DESC LIMIT ?", (limit,))
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+        s.add(log)
+        s.commit()
+
+
+def get_job_logs(publisher_id=None, app_id=None, run_job_id=None, limit=200):
+    with get_session() as s:
+        q = select(JobLog)
+        if publisher_id is not None:
+            q = q.where(JobLog.publisher_id == publisher_id)
+        if app_id is not None:
+            q = q.where(JobLog.app_id == app_id)
+        if run_job_id is not None:
+            q = q.where(JobLog.run_job_id == run_job_id)
+        q = q.order_by(JobLog.ran_at.desc()).limit(limit)
+        rows = s.execute(q).scalars().all()
+        return [_to_dict(r) for r in rows]
+
 
 # --- Pending Approvals ---
 
-def create_approval(publisher_id, job_id, matched, skipped, dry_run_data=""):
-    conn = get_conn()
-    c = conn.cursor()
-    expires = (datetime.now() + timedelta(hours=48)).isoformat()
-    c.execute('''
-        INSERT INTO pending_approvals
-        (publisher_id, job_id, matched, skipped, dry_run_data, status, expires_at)
-        VALUES (?, ?, ?, ?, ?, 'pending', ?)
-    ''', (publisher_id, job_id, matched, skipped, dry_run_data, expires))
-    conn.commit()
-    conn.close()
+def create_approval(app_id, job_id, matched, skipped, expire_hours=48):
+    with get_session() as s:
+        approval = PendingApproval(
+            app_id=app_id,
+            job_id=job_id,
+            matched=matched,
+            skipped=skipped,
+            expires_at=datetime.utcnow() + timedelta(hours=expire_hours),
+        )
+        s.add(approval)
+        s.commit()
+
 
 def get_approval(job_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT * FROM pending_approvals WHERE job_id = ?", (job_id,))
-    row = c.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with get_session() as s:
+        a = s.execute(
+            select(PendingApproval).where(PendingApproval.job_id == job_id)
+        ).scalar_one_or_none()
+        return _to_dict(a)
+
 
 def get_pending_approvals():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        SELECT pa.*, p.name as publisher_name, p.find_string, p.replace_string
-        FROM pending_approvals pa
-        JOIN publishers p ON pa.publisher_id = p.id
-        WHERE pa.status = 'pending'
-        ORDER BY pa.created_at DESC
-    ''')
-    rows = c.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    with get_session() as s:
+        rows = s.execute(
+            select(PendingApproval)
+            .where(PendingApproval.status == "pending")
+            .order_by(PendingApproval.created_at.desc())
+        ).scalars().all()
+
+        result = []
+        for a in rows:
+            d = _to_dict(a)
+            # App + Publisher bilgisini ekle
+            if a.app_id:
+                app_row = s.get(App, a.app_id)
+                if app_row:
+                    d["app_label"] = app_row.label
+                    d["app_platform"] = app_row.platform
+                    if app_row.publisher:
+                        d["publisher_name"] = app_row.publisher.name
+            result.append(d)
+        return result
+
 
 def approve_job(job_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        UPDATE pending_approvals
-        SET status = 'approved', approved_at = ?
-        WHERE job_id = ? AND status = 'pending'
-    ''', (datetime.now().isoformat(), job_id))
-    updated = c.rowcount
-    conn.commit()
-    conn.close()
-    return updated > 0
+    with get_session() as s:
+        a = s.execute(
+            select(PendingApproval).where(
+                and_(PendingApproval.job_id == job_id,
+                     PendingApproval.status == "pending")
+            )
+        ).scalar_one_or_none()
+        if not a:
+            return False
+        a.status = "approved"
+        a.approved_at = datetime.utcnow()
+        s.commit()
+        return True
+
 
 def expire_old_approvals():
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        UPDATE pending_approvals
-        SET status = 'expired'
-        WHERE status = 'pending' AND expires_at < ?
-    ''', (datetime.now().isoformat(),))
-    expired = c.rowcount
-    conn.commit()
-    conn.close()
-    return expired
+    with get_session() as s:
+        result = s.execute(
+            update(PendingApproval)
+            .where(and_(
+                PendingApproval.status == "pending",
+                PendingApproval.expires_at < datetime.utcnow()
+            ))
+            .values(status="expired")
+        )
+        s.commit()
+        return result.rowcount
+
+
+# --- Hybrid Scheduler ---
 
 def get_hybrid_publishers_due():
-    """Hybrid modda olup çalışma zamanı gelen publisher'ları getir"""
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
-        SELECT * FROM publishers
-        WHERE active = 1 AND mode = 'hybrid'
-    ''')
-    rows = c.fetchall()
-    conn.close()
+    """Hybrid modda olup çalışma zamanı gelen publisher'ları getir."""
+    with get_session() as s:
+        rows = s.execute(
+            select(Publisher).where(and_(
+                Publisher.active == 1,
+                Publisher.mode == "hybrid",
+            ))
+        ).scalars().all()
 
-    now = datetime.now()
-    due = []
-    for row in rows:
-        p = dict(row)
-        if not p["last_run"]:
-            due.append(p)
-            continue
-        last = datetime.fromisoformat(p["last_run"])
-        if (now - last).days >= p["frequency_days"]:
-            due.append(p)
-    return due
+        now = datetime.utcnow()
+        due = []
+        for p in rows:
+            if not p.last_run:
+                due.append(_to_dict(p))
+                continue
+            if (now - p.last_run).days >= p.frequency_days:
+                due.append(_to_dict(p))
+        return due
+
 
 if __name__ == "__main__":
     init_db()
-
-    # Test publisher — key'ler referans olarak saklanıyor
-    # add_publisher(
-    #     name           = "TheGameOps Test",
-    #     management_key = "e0757bd737fa69c9d7c8dea73f3e4d57bc403d2a557073180b8e3a938d773465e7759b6c89fb89297e66d2",
-    #     publisher_tag  = "thegameops",
-    #     find_string    = "_0_",
-    #     replace_string = "_TEST_",
-    #     frequency_days = 2
-    # )
-
-    publishers = get_all_publishers()
-    for p in publishers:
-        print(f"  - {p['name']} | tag: {p['publisher_tag']} | find: {p['find_string']}")
+    print("Publishers:", get_all_publishers())

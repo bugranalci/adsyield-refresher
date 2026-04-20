@@ -90,11 +90,45 @@ export async function deletePublisher(id) {
   return request(`${BASE_URL}/publishers/${id}`, { method: 'DELETE' });
 }
 
-// --- Run & Jobs ---
-
-export async function runPublisher(id, dryRun = true) {
-  return request(`${BASE_URL}/publishers/${id}/run?dry_run=${dryRun}`, { method: 'POST' });
+export async function getPublisherApps(publisherId) {
+  return request(`${BASE_URL}/publishers/${publisherId}/apps`);
 }
+
+// --- Apps ---
+
+export async function createApp(data) {
+  return request(`${BASE_URL}/apps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+}
+
+export async function getApp(appId) {
+  return request(`${BASE_URL}/apps/${appId}`);
+}
+
+export async function updateApp(appId, data) {
+  return request(`${BASE_URL}/apps/${appId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+}
+
+export async function deleteApp(appId) {
+  return request(`${BASE_URL}/apps/${appId}`, { method: 'DELETE' });
+}
+
+export async function getSlotStatus(appId) {
+  return request(`${BASE_URL}/apps/${appId}/slot-status`);
+}
+
+export async function runApp(appId, dryRun = true) {
+  return request(`${BASE_URL}/apps/${appId}/run?dry_run=${dryRun}`, { method: 'POST' });
+}
+
+// --- Jobs ---
 
 export async function getJobStatus(jobId) {
   return request(`${BASE_URL}/jobs/${jobId}`);
@@ -132,8 +166,20 @@ export async function confirmApproval(jobId) {
   return request(`${BASE_URL}/approvals/${jobId}/confirm`, { method: 'POST' });
 }
 
+// --- Snapshots / Rollback ---
+
+export async function getSnapshots(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request(`${BASE_URL}/snapshots${qs ? '?' + qs : ''}`);
+}
+
+export async function rollbackSnapshot(snapshotId) {
+  return request(`${BASE_URL}/snapshots/${snapshotId}/rollback`, { method: 'POST' });
+}
+
 // --- Logs ---
 
-export async function getLogs() {
-  return request(`${BASE_URL}/logs`);
+export async function getLogs(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return request(`${BASE_URL}/logs${qs ? '?' + qs : ''}`);
 }

@@ -15,7 +15,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py database.py engine.py scheduler.py mailer.py auth.py ./
+COPY api.py db.py database.py engine.py gam_client.py max_client.py scheduler.py mailer.py auth.py ./
 COPY --from=frontend /app/build ./build
 
 EXPOSE 8000

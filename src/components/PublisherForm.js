@@ -6,9 +6,7 @@ function PublisherForm({ onClose, onSaved, publisher }) {
   const [form, setForm] = useState({
     name: publisher?.name || '',
     management_key: publisher?.management_key || '',
-    publisher_tag: publisher?.publisher_tag || '',
-    find_string: publisher?.find_string || '',
-    replace_string: publisher?.replace_string || '',
+    gam_publisher_id: publisher?.gam_publisher_id || '',
     frequency_days: publisher?.frequency_days || 2,
     active: publisher?.active ?? 1,
     mode: publisher?.mode || 'manual',
@@ -22,29 +20,34 @@ function PublisherForm({ onClose, onSaved, publisher }) {
   };
 
   const handleSubmit = async () => {
-    if (!form.name || !form.management_key || !form.publisher_tag || !form.find_string || !form.replace_string) {
-      setError('Tum alanlari doldur.');
-      return;
+    if (!isEdit) {
+      if (!form.name || !form.management_key || !form.gam_publisher_id) {
+        setError('Name, Management Key ve GAM Publisher ID zorunlu.');
+        return;
+      }
     }
     if (form.mode === 'hybrid' && !form.notify_email) {
       setError('Hybrid modda notify email zorunlu.');
       return;
     }
+
     setLoading(true);
     setError('');
     try {
       if (isEdit) {
         const res = await updatePublisher(publisher.id, {
-          find_string: form.find_string,
-          replace_string: form.replace_string,
-          frequency_days: parseInt(form.frequency_days),
           active: parseInt(form.active),
+          frequency_days: parseInt(form.frequency_days),
           mode: form.mode,
-          notify_email: form.notify_email
+          notify_email: form.notify_email,
+          gam_publisher_id: form.gam_publisher_id,
         });
         if (res.error) { setError(res.error); setLoading(false); return; }
       } else {
-        await createPublisher({ ...form, frequency_days: parseInt(form.frequency_days) });
+        await createPublisher({
+          ...form,
+          frequency_days: parseInt(form.frequency_days),
+        });
       }
       onSaved();
     } catch (e) {
@@ -64,40 +67,34 @@ function PublisherForm({ onClose, onSaved, publisher }) {
           {error && <div className="form-error">{error}</div>}
           <div className="form-group">
             <label>Publisher Name</label>
-            <input name="name" value={form.name} onChange={handleChange} placeholder="TheGameOps" disabled={isEdit} />
+            <input name="name" value={form.name} onChange={handleChange} placeholder="Mackolik" disabled={isEdit} />
           </div>
           <div className="form-group">
-            <label>Management Key</label>
-            <input name="management_key" value={form.management_key} onChange={handleChange} placeholder="API key..." disabled={isEdit} />
+            <label>Management Key (AppLovin MAX)</label>
+            <input name="management_key" value={form.management_key} onChange={handleChange} placeholder="MAX API key..." disabled={isEdit} />
           </div>
           <div className="form-group">
-            <label>Publisher Tag</label>
-            <input name="publisher_tag" value={form.publisher_tag} onChange={handleChange} placeholder="thegameops" disabled={isEdit} />
-          </div>
-          <div className="form-group">
-            <label>Find String</label>
-            <input name="find_string" value={form.find_string} onChange={handleChange} placeholder="_v45_" />
-          </div>
-          <div className="form-group">
-            <label>Replace String</label>
-            <input name="replace_string" value={form.replace_string} onChange={handleChange} placeholder="_v46_" />
-          </div>
-          <div className="form-group">
-            <label>Frequency (days)</label>
-            <input name="frequency_days" type="number" value={form.frequency_days} onChange={handleChange} />
+            <label>GAM Publisher ID</label>
+            <input name="gam_publisher_id" value={form.gam_publisher_id} onChange={handleChange} placeholder="22860626436" />
           </div>
           <div className="form-group">
             <label>Mode</label>
             <select name="mode" value={form.mode} onChange={handleChange} className="form-select">
               <option value="manual">Manual</option>
-              <option value="hybrid">Hybrid (Auto Dry Run + Email Onay)</option>
+              <option value="hybrid">Hybrid (Otomatik Dry Run + Email Onay)</option>
             </select>
           </div>
           {form.mode === 'hybrid' && (
-            <div className="form-group">
-              <label>Notify Email (Account Manager)</label>
-              <input name="notify_email" value={form.notify_email} onChange={handleChange} placeholder="am@makroo.com" />
-            </div>
+            <>
+              <div className="form-group">
+                <label>Notify Email (Account Manager)</label>
+                <input name="notify_email" value={form.notify_email} onChange={handleChange} placeholder="am@adsyield.com" />
+              </div>
+              <div className="form-group">
+                <label>Frequency (days)</label>
+                <input name="frequency_days" type="number" value={form.frequency_days} onChange={handleChange} />
+              </div>
+            </>
           )}
           {isEdit && (
             <div className="form-group">
